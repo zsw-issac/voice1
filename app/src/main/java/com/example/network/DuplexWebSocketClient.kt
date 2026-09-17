@@ -31,10 +31,14 @@ interface DuplexEventListener {
     fun onConnected()
     fun onDisconnected(reason: String)
     fun onError(error: String)
-    fun onAiAudioReceived(pcmData: ByteArray)
-    fun onUserTranscript(text: String, isFinal: Boolean)
-    fun onAiText(text: String, isFinal: Boolean)
+    fun onAiAudioReceived(pcmData: ByteArray, isLast: Boolean, responseId: Int)
+    fun onTranscriptDelta(delta: String, responseId: Int)
+    fun onTranscriptFinal(text: String, responseId: Int)
     fun onAiStateChanged(state: String)
+    fun onResponseStarted(responseId: Int)
+    fun onResponseInterrupted(responseId: Int)
+    fun onResponseDone(responseId: Int, cancelled: Boolean)
+    fun onSessionReady(sessionId: String, model: String)
     fun onLatencyMeasured(rttMs: Long)
 }
 
@@ -65,6 +69,7 @@ class DuplexWebSocketClient(
     private val _rttMs = MutableStateFlow(0L)
     val rttMs: StateFlow<Long> = _rttMs.asStateFlow()
 
+    // Scheme A: true (binary raw PCM uplink), Scheme B: false (input_audio_buffer.append JSON)
     var isBinaryMode: Boolean = true
 
     fun connect(url: String, coroutineScope: CoroutineScope) {
@@ -92,7 +97,7 @@ class DuplexWebSocketClient(
                 _connectionState.value = ConnectionState.Connected(url)
                 listener.onConnected()
 
-                // Start periodic ping for RTT latency measurement
+                // Start periodic ping for RTT latency measurement using {"type":"ping","ts":...}
                 pingJob = coroutineScope.launch(Dispatchers.IO) {
                     while (isActive && _connectionState.value is ConnectionState.Connected) {
                         try {
@@ -114,8 +119,18 @@ class DuplexWebSocketClient(
             override fun onMessage(ws: WebSocket, bytes: ByteString) {
                 val data = bytes.toByteArray()
                 _bytesReceived.value += data.size
-                // Direct binary PCM from server
-                listener.onAiAudioReceived(data)
+
+                // Scheme A Downlink binary frame
+                // Byte 0: Bit 7 = isLast, Bit 0-6 = response_id
+                // Byte 1..N: PCM 16bit 24000Hz audio
+                val parsed = DuplexProtocol.parseDownlinkBinaryFrame(data)
+                if (parsed != null) {
+                    listener.onAiAudioReceived(
+                        pcmData = parsed.pcmAudio,
+                        isLast = parsed.isLast,
+                        responseId = parsed.responseId
+                    )
+                }
             }
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) {
@@ -146,54 +161,91 @@ class DuplexWebSocketClient(
 
             when (type) {
                 DuplexProtocol.TYPE_PONG -> {
-                    val clientTs = json.optLong("client_timestamp", 0L)
-                    if (clientTs > 0) {
-                        val rtt = (System.currentTimeMillis() - clientTs).coerceAtLeast(1)
+                    val ts = json.optLong("ts", 0L)
+                    if (ts > 0) {
+                        val rtt = (System.currentTimeMillis() - ts).coerceAtLeast(1)
                         _rttMs.value = rtt
                         listener.onLatencyMeasured(rtt)
                     }
                 }
-                DuplexProtocol.TYPE_AI_AUDIO -> {
-                    val base64 = json.optString("data", "")
-                    if (base64.isNotEmpty()) {
-                        val pcm = DuplexProtocol.decodeBase64Audio(base64)
-                        if (pcm != null && pcm.isNotEmpty()) {
-                            listener.onAiAudioReceived(pcm)
+
+                DuplexProtocol.TYPE_SESSION_READY -> {
+                    val sessionId = json.optString("session_id", "")
+                    val model = json.optString("model", "")
+                    listener.onSessionReady(sessionId, model)
+                }
+
+                DuplexProtocol.TYPE_STATE -> {
+                    val stateValue = json.optString("value", "listening")
+                    listener.onAiStateChanged(stateValue)
+                }
+
+                DuplexProtocol.TYPE_RESPONSE_START -> {
+                    val responseId = json.optInt("response_id", 0)
+                    listener.onResponseStarted(responseId)
+                }
+
+                DuplexProtocol.TYPE_TRANSCRIPT -> {
+                    val isFinal = json.optBoolean("final", false)
+                    val responseId = json.optInt("response_id", 0)
+                    if (isFinal) {
+                        val fullText = json.optString("text", "")
+                        listener.onTranscriptFinal(fullText, responseId)
+                    } else {
+                        val delta = json.optString("delta", "")
+                        if (delta.isNotEmpty()) {
+                            listener.onTranscriptDelta(delta, responseId)
                         }
                     }
                 }
-                DuplexProtocol.TYPE_USER_TRANSCRIPT -> {
-                    val transcript = json.optString("text", "")
-                    val isFinal = json.optBoolean("is_final", false)
-                    listener.onUserTranscript(transcript, isFinal)
+
+                DuplexProtocol.TYPE_RESPONSE_AUDIO_DELTA -> {
+                    // Scheme B Downlink
+                    val base64 = json.optString("delta", "")
+                    val responseId = json.optInt("response_id", 0)
+                    val isLast = json.optBoolean("last", false)
+                    if (base64.isNotEmpty()) {
+                        val pcm = DuplexProtocol.decodeBase64Audio(base64)
+                        if (pcm != null && pcm.isNotEmpty()) {
+                            listener.onAiAudioReceived(pcm, isLast, responseId)
+                        } else if (isLast) {
+                            listener.onAiAudioReceived(ByteArray(0), true, responseId)
+                        }
+                    } else if (isLast) {
+                        listener.onAiAudioReceived(ByteArray(0), true, responseId)
+                    }
                 }
-                DuplexProtocol.TYPE_AI_TEXT -> {
-                    val aiText = json.optString("text", "")
-                    val isFinal = json.optBoolean("is_final", false)
-                    listener.onAiText(aiText, isFinal)
+
+                DuplexProtocol.TYPE_RESPONSE_INTERRUPTED -> {
+                    val responseId = json.optInt("response_id", 0)
+                    listener.onResponseInterrupted(responseId)
                 }
-                DuplexProtocol.TYPE_AI_STATE -> {
-                    val state = json.optString("state", "idle")
-                    listener.onAiStateChanged(state)
+
+                DuplexProtocol.TYPE_RESPONSE_DONE -> {
+                    val responseId = json.optInt("response_id", 0)
+                    val cancelled = json.optBoolean("cancelled", false)
+                    listener.onResponseDone(responseId, cancelled)
                 }
-                DuplexProtocol.TYPE_SESSION_READY -> {
-                    listener.onAiStateChanged("ready")
-                }
+
                 DuplexProtocol.TYPE_ERROR -> {
-                    val msg = json.optString("message", "服务端异常")
-                    listener.onError(msg)
+                    val code = json.optString("code", "")
+                    val msg = json.optString("message", "服务端错误: $code")
+                    listener.onError("[$code] $msg")
                 }
+
                 else -> {
-                    Log.d(tag, "Unknown message type: $type")
+                    Log.d(tag, "Ignored or unhandled message type: $type")
                 }
             }
         } catch (e: Exception) {
-            Log.w(tag, "Failed to parse json: ${e.message}")
+            Log.w(tag, "Failed to parse incoming json: ${e.message}")
         }
     }
 
     /**
-     * Sends an audio frame to the server (either raw binary PCM or Base64 JSON).
+     * Sends an audio frame to the server.
+     * Scheme A: Raw 16-bit PCM binary frame (1280 bytes for 40ms @ 16kHz).
+     * Scheme B: {"type":"input_audio_buffer.append","audio":"<base64>"}
      */
     fun sendAudioFrame(pcmData: ByteArray) {
         val ws = webSocket ?: return
@@ -201,10 +253,12 @@ class DuplexWebSocketClient(
 
         try {
             if (isBinaryMode) {
+                // Scheme A: Raw PCM binary frame
                 ws.send(pcmData.toByteString())
                 _bytesSent.value += pcmData.size
             } else {
-                val json = DuplexProtocol.buildAudioChunkJson(pcmData)
+                // Scheme B: JSON format
+                val json = DuplexProtocol.buildAudioBufferAppend(pcmData)
                 ws.send(json)
                 _bytesSent.value += json.toByteArray().size
             }
@@ -214,12 +268,13 @@ class DuplexWebSocketClient(
     }
 
     /**
-     * Sends user interruption notification (Barge-in).
+     * Sends interruption notification (Barge-in).
+     * Server expects {"type":"response.cancel"}.
      */
     fun sendInterrupt() {
         val ws = webSocket ?: return
         try {
-            val json = DuplexProtocol.buildUserInterrupt()
+            val json = DuplexProtocol.buildInterrupt()
             ws.send(json)
             _bytesSent.value += json.toByteArray().size
         } catch (e: Exception) {
@@ -228,40 +283,16 @@ class DuplexWebSocketClient(
     }
 
     /**
-     * Sends session initialization handshake.
+     * Closes the session politely with session.finish before closing websocket.
      */
-    fun sendSessionStart(sampleRate: Int, frameDurationMs: Int, autoInterrupt: Boolean) {
-        val ws = webSocket ?: return
-        try {
-            val json = DuplexProtocol.buildSessionStart(
-                sampleRate = sampleRate,
-                frameDurationMs = frameDurationMs,
-                autoInterrupt = autoInterrupt
-            )
-            ws.send(json)
-            _bytesSent.value += json.toByteArray().size
-        } catch (e: Exception) {
-            Log.e(tag, "Failed to send session start: ${e.message}")
-        }
-    }
-
-    /**
-     * Sends a text message (fallback or multimodal text input).
-     */
-    fun sendTextMessage(text: String) {
-        val ws = webSocket ?: return
-        try {
-            val json = DuplexProtocol.buildTextInput(text)
-            ws.send(json)
-            _bytesSent.value += json.toByteArray().size
-        } catch (e: Exception) {
-            Log.e(tag, "Failed to send text message: ${e.message}")
-        }
-    }
-
     fun disconnect() {
         pingJob?.cancel()
         pingJob = null
+        try {
+            webSocket?.send(DuplexProtocol.buildSessionFinish())
+        } catch (e: Exception) {
+            // Ignore
+        }
         try {
             webSocket?.close(1000, "User disconnected")
         } catch (e: Exception) {

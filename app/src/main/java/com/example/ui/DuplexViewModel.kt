@@ -13,6 +13,7 @@ import com.example.data.DuplexRepository
 import com.example.data.MessageEntity
 import com.example.network.ConnectionState
 import com.example.network.DuplexEventListener
+import com.example.network.DuplexProtocol
 import com.example.network.DuplexWebSocketClient
 import com.example.network.MockDuplexServer
 import kotlinx.coroutines.Job
@@ -34,11 +35,12 @@ enum class InteractionState(val label: String) {
 data class DuplexUiState(
     val connectionState: ConnectionState = ConnectionState.Disconnected,
     val interactionState: InteractionState = InteractionState.IDLE,
-    val serverUrl: String = "ws://10.0.2.2:8000/ws/audio",
+    val serverUrl: String = DuplexProtocol.DEFAULT_SERVER_URL,
     val isSimulatorMode: Boolean = false,
-    val sampleRate: Int = 16000,
+    val uplinkSampleRate: Int = 16000,
+    val downlinkSampleRate: Int = 24000,
     val frameDurationMs: Int = 40,
-    val isBinaryMode: Boolean = true,
+    val isBinaryMode: Boolean = true, // Scheme A vs Scheme B
     val autoInterrupt: Boolean = true,
     val vadThreshold: Float = 0.08f,
     val isMicMuted: Boolean = false,
@@ -47,6 +49,9 @@ data class DuplexUiState(
     val aiAmplitude: Float = 0f,
     val currentUserTranscript: String = "",
     val currentAiText: String = "",
+    val currentResponseId: Int = 0,
+    val serverModel: String = "",
+    val sessionId: String = "",
     val rttMs: Long = 0,
     val bytesSent: Long = 0,
     val bytesReceived: Long = 0,
@@ -54,7 +59,11 @@ data class DuplexUiState(
     val messages: List<MessageEntity> = emptyList(),
     val conversations: List<ConversationEntity> = emptyList(),
     val errorMessage: String? = null
-)
+) {
+    // Helper for UI sample rate display
+    val sampleRate: Int
+        get() = uplinkSampleRate
+}
 
 class DuplexViewModel(application: Application) : AndroidViewModel(application), DuplexEventListener {
     private val tag = "DuplexViewModel"
@@ -75,8 +84,10 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
         val db = DuplexDatabase.getDatabase(application)
         repository = DuplexRepository(db.conversationDao())
 
+        // 16kHz Uplink, 24kHz Downlink
         audioConfig = AudioConfig(
-            sampleRate = 16000,
+            uplinkSampleRate = 16000,
+            downlinkSampleRate = 24000,
             frameDurationMs = 40,
             vadEnergyThreshold = 0.08f,
             autoInterruptOnSpeech = true
@@ -146,10 +157,10 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
 
     private fun connect() {
         viewModelScope.launch {
-            // Start audio playback engine
+            // Start audio playback engine (24000Hz)
             audioPlayback.start(viewModelScope)
 
-            // Start audio recording
+            // Start audio recording (16000Hz)
             val recordStarted = audioCapture.startRecording(viewModelScope)
             if (!recordStarted && !audioCapture.hasRecordPermission()) {
                 _uiState.update {
@@ -219,7 +230,7 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
         audioPlayback.interrupt()
         audioCapture.isAiSpeaking = false
 
-        // 2. Notify remote server or mock server to stop generating/TTS
+        // 2. Notify remote server (sends {"type":"response.cancel"})
         if (_uiState.value.isSimulatorMode) {
             mockServer.onUserInterrupt()
         } else {
@@ -269,8 +280,6 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
             }
             if (_uiState.value.isSimulatorMode) {
                 mockServer.onUserSpeechDetected(viewModelScope)
-            } else {
-                wsClient.sendTextMessage(text)
             }
         }
     }
@@ -288,7 +297,7 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
             it.copy(
                 serverUrl = serverUrl,
                 isSimulatorMode = isSimulatorMode,
-                sampleRate = sampleRate,
+                uplinkSampleRate = sampleRate,
                 frameDurationMs = frameDurationMs,
                 isBinaryMode = isBinaryMode,
                 autoInterrupt = autoInterrupt,
@@ -296,9 +305,10 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
             )
         }
 
-        // Recreate audio config if parameters changed
+        // Recreate audio config
         audioConfig = AudioConfig(
-            sampleRate = sampleRate,
+            uplinkSampleRate = sampleRate,
+            downlinkSampleRate = 24000,
             frameDurationMs = frameDurationMs,
             vadEnergyThreshold = vadThreshold,
             autoInterruptOnSpeech = autoInterrupt
@@ -332,15 +342,6 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
                 errorMessage = null
             )
         }
-
-        // Send handshake session_start
-        if (!_uiState.value.isSimulatorMode) {
-            wsClient.sendSessionStart(
-                sampleRate = _uiState.value.sampleRate,
-                frameDurationMs = _uiState.value.frameDurationMs,
-                autoInterrupt = _uiState.value.autoInterrupt
-            )
-        }
     }
 
     override fun onDisconnected(reason: String) {
@@ -363,44 +364,73 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
         }
     }
 
-    override fun onAiAudioReceived(pcmData: ByteArray) {
-        audioCapture.isAiSpeaking = true
-        audioPlayback.enqueueAudioChunk(pcmData)
+    override fun onSessionReady(sessionId: String, model: String) {
+        Log.d(tag, "Session ready: id=$sessionId model=$model")
         _uiState.update {
-            it.copy(interactionState = InteractionState.AI_SPEAKING)
+            it.copy(
+                sessionId = sessionId,
+                serverModel = model,
+                interactionState = InteractionState.LISTENING
+            )
         }
     }
 
-    override fun onUserTranscript(text: String, isFinal: Boolean) {
+    override fun onResponseStarted(responseId: Int) {
         _uiState.update {
             it.copy(
-                currentUserTranscript = text,
-                interactionState = InteractionState.USER_SPEAKING
+                currentResponseId = responseId,
+                currentAiText = "",
+                interactionState = InteractionState.AI_SPEAKING
             )
         }
-        if (isFinal && text.isNotBlank()) {
-            val convId = _uiState.value.currentConversationId
-            if (convId > 0) {
-                viewModelScope.launch {
-                    repository.addMessage(convId, "user", text)
-                }
+    }
+
+    override fun onTranscriptDelta(delta: String, responseId: Int) {
+        _uiState.update {
+            it.copy(
+                currentAiText = it.currentAiText + delta,
+                interactionState = InteractionState.AI_SPEAKING
+            )
+        }
+    }
+
+    override fun onTranscriptFinal(text: String, responseId: Int) {
+        _uiState.update {
+            it.copy(
+                currentAiText = text
+            )
+        }
+        val convId = _uiState.value.currentConversationId
+        if (convId > 0 && text.isNotBlank()) {
+            viewModelScope.launch {
+                repository.addMessage(convId, "assistant", text)
             }
         }
     }
 
-    override fun onAiText(text: String, isFinal: Boolean) {
-        _uiState.update {
-            it.copy(
-                currentAiText = text,
-                interactionState = InteractionState.AI_SPEAKING
-            )
+    override fun onAiAudioReceived(pcmData: ByteArray, isLast: Boolean, responseId: Int) {
+        if (pcmData.isNotEmpty()) {
+            audioCapture.isAiSpeaking = true
+            audioPlayback.enqueueAudioChunk(pcmData)
+            _uiState.update {
+                it.copy(interactionState = InteractionState.AI_SPEAKING)
+            }
         }
-        if (isFinal && text.isNotBlank()) {
-            val convId = _uiState.value.currentConversationId
-            if (convId > 0) {
-                viewModelScope.launch {
-                    repository.addMessage(convId, "assistant", text)
-                }
+    }
+
+    override fun onResponseInterrupted(responseId: Int) {
+        audioPlayback.interrupt()
+        audioCapture.isAiSpeaking = false
+        _uiState.update {
+            it.copy(interactionState = InteractionState.INTERRUPTED)
+        }
+    }
+
+    override fun onResponseDone(responseId: Int, cancelled: Boolean) {
+        if (!cancelled) {
+            audioCapture.isAiSpeaking = false
+            _uiState.update {
+                it.copy(interactionState = InteractionState.LISTENING)
             }
         }
     }

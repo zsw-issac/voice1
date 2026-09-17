@@ -13,7 +13,7 @@ class MockDuplexServer(
 ) {
     private var simulationJob: Job? = null
     private var isConnected = false
-    private var currentTurn = 0
+    private var currentResponseId = 0
 
     private val sampleReplies = listOf(
         "您好！全双工语音交互通道已建立。双向流式音频与实时VAD均正常工作，您可以随时说话打断我。",
@@ -26,6 +26,7 @@ class MockDuplexServer(
         if (isConnected) return
         isConnected = true
         listener.onConnected()
+        listener.onSessionReady("mock_sess_01", "Qwen2.5-Omni-7B (Simulator)")
         listener.onAiStateChanged("listening")
 
         // Periodically report simulated low latency RTT
@@ -41,37 +42,38 @@ class MockDuplexServer(
     fun onUserSpeechDetected(coroutineScope: CoroutineScope) {
         if (!isConnected) return
 
-        // If assistant was speaking, this is a barge-in
+        // If assistant was speaking, cancel previous
         simulationJob?.cancel()
 
         simulationJob = coroutineScope.launch(Dispatchers.Default) {
-            listener.onAiStateChanged("listening")
-            listener.onUserTranscript("正在倾听您的语音...", false)
-            delay(500)
-            listener.onUserTranscript("你好，测试全双工语音打断与流式交互。", true)
+            val respId = ++currentResponseId
 
-            delay(300)
+            listener.onAiStateChanged("listening")
+            delay(400)
             listener.onAiStateChanged("thinking")
             delay(400)
 
-            // AI starts speaking
+            listener.onResponseStarted(respId)
             listener.onAiStateChanged("speaking")
-            val replyText = sampleReplies[currentTurn % sampleReplies.size]
-            currentTurn++
 
-            // Stream text tokens
+            val replyText = sampleReplies[respId % sampleReplies.size]
+
+            // Stream transcript deltas
             val words = replyText.chunked(2)
             var accumulated = ""
             for (word in words) {
                 if (!isActive) break
                 accumulated += word
-                listener.onAiText(accumulated, accumulated == replyText)
-                delay(80)
+                listener.onTranscriptDelta(word, respId)
+                delay(70)
+            }
+            if (isActive) {
+                listener.onTranscriptFinal(replyText, respId)
             }
 
-            // Stream audio chunks (Generate 16kHz 16-bit PCM sinusoidal speech tone bursts)
-            val sampleRate = 16000
-            val chunkSamples = 640 // 40ms chunk = 1280 bytes
+            // Stream audio chunks (Generate 24kHz 16-bit PCM for Downlink)
+            val sampleRate = 24000
+            val chunkSamples = 960 // 40ms @ 24kHz = 960 samples = 1920 bytes
             val totalDurationMs = 2800
             val totalChunks = totalDurationMs / 40
 
@@ -81,33 +83,35 @@ class MockDuplexServer(
             for (chunkIndex in 0 until totalChunks) {
                 if (!isActive) break
 
+                val isLast = (chunkIndex == totalChunks - 1)
                 val freq = frequencies[(chunkIndex / 15) % frequencies.size]
                 val chunkBytes = ByteArray(chunkSamples * 2)
 
                 for (i in 0 until chunkSamples) {
                     phase += 2.0 * Math.PI * freq / sampleRate
-                    // Apply envelope to avoid clicking
-                    val amp = 0.35 * sin(phase)
+                    val amp = 0.32 * sin(phase)
                     val sampleValue = (amp * 32767).toInt().coerceIn(-32768, 32767).toShort()
                     chunkBytes[i * 2] = (sampleValue.toInt() and 0xFF).toByte()
                     chunkBytes[i * 2 + 1] = ((sampleValue.toInt() shr 8) and 0xFF).toByte()
                 }
 
-                listener.onAiAudioReceived(chunkBytes)
+                listener.onAiAudioReceived(chunkBytes, isLast, respId)
                 delay(40) // 40ms real-time streaming pace
             }
 
             if (isActive) {
+                listener.onResponseDone(respId, false)
                 listener.onAiStateChanged("listening")
             }
         }
     }
 
     fun onUserInterrupt() {
+        val respId = currentResponseId
         simulationJob?.cancel()
         simulationJob = null
-        listener.onAiStateChanged("interrupted")
-        listener.onAiText("[已打断]", true)
+        listener.onResponseInterrupted(respId)
+        listener.onAiStateChanged("listening")
     }
 
     fun stop() {

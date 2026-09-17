@@ -4,96 +4,77 @@ import org.json.JSONObject
 import android.util.Base64
 
 /**
- * Protocol specification and message parser for full-duplex voice communication.
+ * Protocol specification matching server/app.py + server/protocol.py.
  */
 object DuplexProtocol {
 
-    // Message Types (Client -> Server)
-    const val TYPE_SESSION_START = "session_start"
-    const val TYPE_AUDIO_CHUNK = "audio_chunk"
-    const val TYPE_USER_INTERRUPT = "user_interrupt"
-    const val TYPE_TEXT_INPUT = "text_input"
-    const val TYPE_PING = "ping"
-    const val TYPE_SESSION_END = "session_end"
+    // Default Server Endpoints
+    const val DEFAULT_SERVER_URL = "ws://10.0.2.2:8080/ws/duplex"
+    const val ALIAS_SERVER_URL = "ws://10.0.2.2:8080/v1/realtime"
 
-    // Message Types (Server -> Client)
-    const val TYPE_SESSION_READY = "session_ready"
-    const val TYPE_USER_TRANSCRIPT = "user_transcript"
-    const val TYPE_AI_TEXT = "ai_text"
-    const val TYPE_AI_AUDIO = "ai_audio"
-    const val TYPE_AI_STATE = "ai_state"
+    // Client -> Server Types
+    const val TYPE_INPUT_AUDIO_APPEND = "input_audio_buffer.append"
+    const val TYPE_RESPONSE_CANCEL = "response.cancel"
+    const val TYPE_BARGE_IN = "barge_in"
+    const val TYPE_SESSION_START = "session.start"
+    const val TYPE_SESSION_UPDATE = "session.update"
+    const val TYPE_SESSION_FINISH = "session.finish"
+    const val TYPE_PING = "ping"
+
+    // Server -> Client Types
+    const val TYPE_SESSION_READY = "session.ready"
+    const val TYPE_STATE = "state"
+    const val TYPE_RESPONSE_START = "response.start"
+    const val TYPE_TRANSCRIPT = "transcript"
+    const val TYPE_RESPONSE_AUDIO_DELTA = "response.audio.delta"
+    const val TYPE_RESPONSE_INTERRUPTED = "response.interrupted"
+    const val TYPE_RESPONSE_DONE = "response.done"
     const val TYPE_PONG = "pong"
     const val TYPE_ERROR = "error"
 
     /**
-     * Creates a session_start JSON message.
+     * Creates Scheme B audio append message:
+     * {"type":"input_audio_buffer.append","audio":"<base64>"}
      */
-    fun buildSessionStart(
-        sampleRate: Int,
-        channels: Int = 1,
-        format: String = "pcm16",
-        frameDurationMs: Int = 40,
-        autoInterrupt: Boolean = true,
-        systemPrompt: String = "You are a helpful, conversational voice assistant."
-    ): String {
-        return JSONObject().apply {
-            put("type", TYPE_SESSION_START)
-            put("sample_rate", sampleRate)
-            put("channels", channels)
-            put("format", format)
-            put("frame_duration_ms", frameDurationMs)
-            put("auto_interrupt", autoInterrupt)
-            put("system_prompt", systemPrompt)
-            put("timestamp", System.currentTimeMillis())
-        }.toString()
-    }
-
-    /**
-     * Creates an audio chunk JSON message with Base64 payload (for JSON mode).
-     */
-    fun buildAudioChunkJson(pcmData: ByteArray): String {
+    fun buildAudioBufferAppend(pcmData: ByteArray): String {
         val base64 = Base64.encodeToString(pcmData, Base64.NO_WRAP)
         return JSONObject().apply {
-            put("type", TYPE_AUDIO_CHUNK)
-            put("data", base64)
-            put("size", pcmData.size)
-            put("timestamp", System.currentTimeMillis())
+            put("type", TYPE_INPUT_AUDIO_APPEND)
+            put("audio", base64)
         }.toString()
     }
 
     /**
-     * Creates a user interrupt notification JSON message (Barge-in).
+     * Creates interrupt message recognized by server:
+     * {"type":"response.cancel"}
      */
-    fun buildUserInterrupt(): String {
+    fun buildInterrupt(): String {
         return JSONObject().apply {
-            put("type", TYPE_USER_INTERRUPT)
-            put("timestamp", System.currentTimeMillis())
+            put("type", TYPE_RESPONSE_CANCEL)
         }.toString()
     }
 
     /**
-     * Creates a fallback text message.
+     * Creates ping message. Server only inspects 'ts' field and echoes it back in pong.
      */
-    fun buildTextInput(text: String): String {
-        return JSONObject().apply {
-            put("type", TYPE_TEXT_INPUT)
-            put("text", text)
-            put("timestamp", System.currentTimeMillis())
-        }.toString()
-    }
-
-    /**
-     * Creates a ping message for RTT latency measurement.
-     */
-    fun buildPing(clientTimestamp: Long = System.currentTimeMillis()): String {
+    fun buildPing(ts: Long = System.currentTimeMillis()): String {
         return JSONObject().apply {
             put("type", TYPE_PING)
-            put("client_timestamp", clientTimestamp)
+            put("ts", ts)
         }.toString()
     }
 
     /**
-     * Decodes Base64 audio from an incoming JSON object.
+     * Creates session.finish message to end session gracefully.
+     */
+    fun buildSessionFinish(): String {
+        return JSONObject().apply {
+            put("type", TYPE_SESSION_FINISH)
+        }.toString()
+    }
+
+    /**
+     * Decodes Base64 audio from Scheme B (response.audio.delta).
      */
     fun decodeBase64Audio(base64String: String): ByteArray? {
         return try {
@@ -104,79 +85,71 @@ object DuplexProtocol {
     }
 
     /**
+     * Parsed Downlink Binary Frame (Scheme A).
+     * Format:
+     * Offset 0: 1-byte header:
+     *   - Bit 7 (0x80): isLast (1 = audio finished for this response)
+     *   - Bit 0-6 (0x7F): responseId (0-127)
+     * Offset 1..N: PCM16 Little-Endian 24000Hz mono audio data (up to 1920 bytes)
+     * NOTE: LAST frame payload length may be 0 (header only).
+     */
+    data class DownlinkBinaryFrame(
+        val isLast: Boolean,
+        val responseId: Int,
+        val pcmAudio: ByteArray
+    )
+
+    fun parseDownlinkBinaryFrame(rawBytes: ByteArray): DownlinkBinaryFrame? {
+        if (rawBytes.isEmpty()) return null
+        val header = rawBytes[0].toInt() and 0xFF
+        val isLast = (header and 0x80) != 0
+        val responseId = header and 0x7F
+        val audioBytes = if (rawBytes.size > 1) {
+            rawBytes.copyOfRange(1, rawBytes.size)
+        } else {
+            ByteArray(0)
+        }
+        return DownlinkBinaryFrame(
+            isLast = isLast,
+            responseId = responseId,
+            pcmAudio = audioBytes
+        )
+    }
+
+    /**
      * Server specification docs shown to the user in the app.
      */
     const val SPECIFICATION_DOCS_MARKDOWN = """
-# 全双工语音交互 WebSocket 对接协议规范
+# 全双工语音服务 · 服务端对接与行为说明
 
-本客户端作为全双工语音交互的终端，提供实时音频采集流发送、实时下行流播放与打断 (Barge-in) 机制。
+本客户端已全面适配实际服务端协议规范（对应 `server/app.py` + `server/protocol.py` + `server/tts_service.py`）。
 
-## 1. 连接方式
-- **协议**: WebSocket (`ws://` 或 `wss://`)
-- **默认地址**: `ws://<服务器IP>:<端口>/ws/audio`
-- **传输模式**:
-  - **二进制模式 (Binary Mode, 推荐)**: 音频上行/下行直接为 16-bit PCM 二进制帧，控制信令为 JSON 文本。延迟最低。
-  - **JSON Base64 模式**: 音频以 Base64 包装在 JSON 消息中。调试方便。
+## 1. 连接地址
+- **监听地址**: `ws://<host>:8080/ws/duplex`
+- **等价别名**: `ws://<host>:8080/v1/realtime`
+- **测试页**: 同端口 `GET /test.html`
 
-## 2. 音频编码参数
-- **采样率**: 16000 Hz 或 24000 Hz (可在设置中选择)
-- **声道**: 单声道 (Mono)
-- **量化**: 16-bit Signed Linear PCM (小端序 Little-Endian)
-- **帧长**: 20ms / 40ms / 100ms (默认 40ms = 640 字节 @ 16kHz)
+## 2. 握手与首包
+- 客户端连接后无需发送初始化文本，服务端连接即主动下发：
+  `{"type":"session.ready","session_id":"...","uplink":{"sample_rate":16000},"downlink":{"sample_rate":24000}}`
 
-## 3. 客户端发送信令 (Client -> Server)
-- **会话握手**:
-  ```json
-  {
-    "type": "session_start",
-    "sample_rate": 16000,
-    "channels": 1,
-    "format": "pcm16",
-    "auto_interrupt": true
-  }
-  ```
-- **音频流**:
-  - 二进制模式: 直接发送原始 PCM ByteArray 帧 (Opcode 0x2)
-  - JSON模式:
-    ```json
-    { "type": "audio_chunk", "data": "<base64_pcm>", "timestamp": 1720000000000 }
-    ```
-- **打断信令 (Barge-in)**:
-  当用户开始说话且检测到打断时发送，服务端应立即停止当前大模型生成和 TTS 推流：
-  ```json
-  { "type": "user_interrupt", "timestamp": 1720000000000 }
-  ```
-- **心跳/延迟测算**:
-  ```json
-  { "type": "ping", "client_timestamp": 1720000000000 }
-  ```
+## 3. 音频参数与分频
+- **上行 (Mic -> Server)**: 16000 Hz, 单声道, 16-bit 小端 PCM, 40ms = **1280 字节**
+- **下行 (Server -> Spk)**: 24000 Hz, 单声道, 16-bit 小端 PCM, 40ms = **1920 字节 + 1 字节帧头**
 
-## 4. 服务端下发信令 (Server -> Client)
-- **连接就绪**:
-  ```json
-  { "type": "session_ready", "session_id": "sess_123" }
-  ```
-- **用户识别转写 (ASR)**:
-  ```json
-  { "type": "user_transcript", "text": "你好", "is_final": true }
-  ```
-- **模型回复文本 (LLM Token)**:
-  ```json
-  { "type": "ai_text", "text": "你好！有什么我可以帮你的？", "is_final": false }
-  ```
-- **模型语音下发 (TTS Audio)**:
-  - 二进制模式: 直接下发 PCM 16bit 二进制流 (Opcode 0x2)
-  - JSON模式:
-    ```json
-    { "type": "ai_audio", "data": "<base64_pcm>" }
-    ```
-- **状态同步**:
-  ```json
-  { "type": "ai_state", "state": "speaking" } // idle / listening / thinking / speaking / interrupted
-  ```
-- **心跳响应**:
-  ```json
-  { "type": "pong", "client_timestamp": 1720000000000, "server_timestamp": 1720000000010 }
-  ```
+## 4. 上行方案判定（按首帧自动固定）
+- **方案 A (推荐)**: 客户端首帧为二进制裸 PCM16，此后音频全走二进制，文本走 JSON。
+- **方案 B**: 首帧发送 `input_audio_buffer.append` JSON 文本，包含 Base64 编码音频。
+
+## 5. 下行二进制帧解析 (方案 A)
+- **字节 0**: 1 字节控制头
+  - bit 7 (0x80): 1 = 本轮回答音频结束 (LAST 帧可能载荷为 0 字节)
+  - bit 0–6 (0x7F): `response_id` (0~127)
+- **字节 1~末尾**: 24000Hz 16-bit PCM 音频流
+
+## 6. 即时打断 (Barge-in)
+- 客户端发送 `{"type":"response.cancel"}`
+- 客户端本地瞬时清空 AudioTrack 播放队列与缓冲
+- 服务端检测到打断后立即终止 LLM 生成与 TTS 推流，若有活跃回答则下发 `response.interrupted`
 """
 }

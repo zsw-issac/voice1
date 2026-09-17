@@ -139,18 +139,21 @@ fun SettingsDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("server_url_input"),
-                            placeholder = { Text("ws://10.0.2.2:8000/ws/audio") },
+                            placeholder = { Text("ws://10.0.2.2:8080/ws/duplex") },
                             singleLine = true,
                             shape = RoundedCornerShape(10.dp)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         // Quick fill buttons
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            QuickFillChip(label = "模拟器PC (10.0.2.2)") {
-                                serverUrl = "ws://10.0.2.2:8000/ws/audio"
+                            QuickFillChip(label = "默认 (8080/ws/duplex)") {
+                                serverUrl = "ws://10.0.2.2:8080/ws/duplex"
                             }
-                            QuickFillChip(label = "局域网默认") {
-                                serverUrl = "ws://192.168.1.100:8000/ws/audio"
+                            QuickFillChip(label = "别名 (/v1/realtime)") {
+                                serverUrl = "ws://10.0.2.2:8080/v1/realtime"
+                            }
+                            QuickFillChip(label = "局域网 (8080)") {
+                                serverUrl = "ws://192.168.1.100:8080/ws/duplex"
                             }
                         }
                     }
@@ -159,7 +162,7 @@ fun SettingsDialog(
                 // Audio Sample Rate
                 Column {
                     Text(
-                        text = "音频采样率",
+                        text = "上行采集采样率 (固定 16kHz 为佳, 下行由服务端输出 24kHz)",
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
                     )
                     Spacer(modifier = Modifier.height(6.dp))
@@ -167,12 +170,12 @@ fun SettingsDialog(
                         FilterChip(
                             selected = sampleRate == 16000,
                             onClick = { sampleRate = 16000 },
-                            label = { Text("16000 Hz (通用标清)") }
+                            label = { Text("16000 Hz (服务端标准上行)") }
                         )
                         FilterChip(
                             selected = sampleRate == 24000,
                             onClick = { sampleRate = 24000 },
-                            label = { Text("24000 Hz (高清模型)") }
+                            label = { Text("24000 Hz") }
                         )
                     }
                 }

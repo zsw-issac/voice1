@@ -36,7 +36,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -47,58 +46,66 @@ import androidx.compose.ui.unit.sp
 import com.example.network.DuplexProtocol
 import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VioletAccent
 
-private const val PYTHON_SAMPLE_SERVER = """# Python FastAPI 全双工语音测试服务端示例
+private const val PYTHON_SAMPLE_SERVER = """# Python FastAPI 全双工语音服务端对接示例 (端口 8080)
+# 对应路由: /ws/duplex 或 /v1/realtime
 # 依赖: pip install fastapi uvicorn websockets
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import json
 import time
 
 app = FastAPI()
 
-@app.websocket("/ws/audio")
-async def audio_websocket(websocket: WebSocket):
+@app.websocket("/ws/duplex")
+@app.websocket("/v1/realtime")
+async def duplex_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("全双工客户端已连接")
     
-    # 1. 响应握手
+    # 1. 服务端主动推送 session.ready 首包 (16kHz上行, 24kHz下行)
     await websocket.send_text(json.dumps({
-        "type": "session_ready",
-        "session_id": "sess_001"
+        "type": "session.ready",
+        "session_id": f"sess_{int(time.time())}",
+        "model": "Qwen2.5-Omni-7B",
+        "uplink": {"sample_rate": 16000, "channels": 1, "format": "pcm16"},
+        "downlink": {"sample_rate": 24000, "channels": 1, "format": "pcm16"}
     }))
     
     try:
         while True:
-            message = await websocket.receive()
-            if "bytes" in message:
-                # 收到客户端实时 16kHz PCM 音频数据帧 (Opcode 0x2)
-                pcm_data = message["bytes"]
-                # 可以在这里送入 ASR 流式识别引擎 (如 FunASR / Whisper / Paraformer)
-                pass
-            elif "text" in message:
-                data = json.loads(message["text"])
-                msg_type = data.get("type")
-                
-                if msg_type == "session_start":
-                    print(f"会话启动参数: {data}")
-                elif msg_type == "user_interrupt":
-                    print("⚠️ 收到客户端打断(Barge-in)信令！立即取消LLM和TTS生成！")
-                elif msg_type == "ping":
-                    # 响应心跳以计算 RTT 延迟
+            msg = await websocket.receive()
+            if "bytes" in msg:
+                # 方案A: 收到 16kHz 16bit PCM 裸流音频帧 (40ms=1280字节)
+                pcm_data = msg["bytes"]
+                # 送入实时 ASR 引擎...
+            elif "text" in msg:
+                data = json.loads(msg["text"])
+                mtype = data.get("type")
+                if mtype == "input_audio_buffer.append":
+                    # 方案B: 收到 Base64 编码的音频帧
+                    pass
+                elif mtype == "response.cancel":
+                    # 收到打断 (Barge-in) 信令！立即取消正在生成的 LLM 与 TTS 流
+                    print("⚠️ 客户端打断！立即取消当前回答！")
+                    await websocket.send_text(json.dumps({
+                        "type": "response.interrupted",
+                        "response_id": 1
+                    }))
+                elif mtype == "ping":
+                    # 响应心跳, 原样回显 ts
                     await websocket.send_text(json.dumps({
                         "type": "pong",
-                        "client_timestamp": data.get("client_timestamp", 0),
-                        "server_timestamp": int(time.time() * 1000)
+                        "ts": data.get("ts", int(time.time() * 1000))
                     }))
+                elif mtype == "session.finish":
+                    break
     except WebSocketDisconnect:
-        print("客户端断开连接")
+        print("客户端断开")
 
 if __name__ == "__main__":
     import uvicorn
-    # 0.0.0.0 允许 Android 模拟器(10.0.2.2) 或同一局域网手机访问
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8080)
 """
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -163,7 +170,7 @@ fun ProtocolSpecSheet(
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("一键复制 Python 后端对接模板代码")
+                Text("一键复制 Python 后端对接模板代码 (8080端口)")
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -176,7 +183,7 @@ fun ProtocolSpecSheet(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        text = "FastAPI 快速对接模板 (支持模拟器 10.0.2.2:8000):",
+                        text = "FastAPI 快速对接模板 (支持模拟器 10.0.2.2:8080):",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = CyanAccent
                     )

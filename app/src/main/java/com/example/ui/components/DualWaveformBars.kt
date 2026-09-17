@@ -115,9 +115,9 @@ fun DualWaveformBars(
                     )
                 }
 
-                // Audio format badge
+                // Audio format badge (16k Up / 24k Down)
                 Text(
-                    text = "${sampleRate / 1000}kHz 16bit · ${if (isBinary) "Binary" else "JSON"}",
+                    text = "↑16k ↓24k · ${if (isBinary) "方案A(裸流)" else "方案B(JSON)"}",
                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                     color = TextSecondary
                 )

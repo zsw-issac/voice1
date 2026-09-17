@@ -44,7 +44,7 @@ class AudioPlaybackManager(
         if (audioTrack != null) return true
 
         val minBufferSize = AudioTrack.getMinBufferSize(
-            config.sampleRate,
+            config.downlinkSampleRate,
             config.channelConfigOut,
             config.audioFormat
         )
@@ -53,7 +53,7 @@ class AudioPlaybackManager(
             return false
         }
 
-        bufferSize = maxOf(minBufferSize * 2, config.bytesPerFrame * 4)
+        bufferSize = maxOf(minBufferSize * 2, config.downlinkBytesPerFrame * 4)
 
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -61,7 +61,7 @@ class AudioPlaybackManager(
             .build()
 
         val format = AudioFormat.Builder()
-            .setSampleRate(config.sampleRate)
+            .setSampleRate(config.downlinkSampleRate)
             .setChannelMask(config.channelConfigOut)
             .setEncoding(config.audioFormat)
             .build()
