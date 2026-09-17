@@ -1,0 +1,436 @@
+package com.example.ui
+
+import android.app.Application
+import android.util.Log
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.audio.AudioCaptureManager
+import com.example.audio.AudioConfig
+import com.example.audio.AudioPlaybackManager
+import com.example.data.ConversationEntity
+import com.example.data.DuplexDatabase
+import com.example.data.DuplexRepository
+import com.example.data.MessageEntity
+import com.example.network.ConnectionState
+import com.example.network.DuplexEventListener
+import com.example.network.DuplexWebSocketClient
+import com.example.network.MockDuplexServer
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+enum class InteractionState(val label: String) {
+    IDLE("待命"),
+    LISTENING("正在倾听"),
+    USER_SPEAKING("用户说话中"),
+    THINKING("模型思考中"),
+    AI_SPEAKING("AI正在回复"),
+    INTERRUPTED("已打断")
+}
+
+data class DuplexUiState(
+    val connectionState: ConnectionState = ConnectionState.Disconnected,
+    val interactionState: InteractionState = InteractionState.IDLE,
+    val serverUrl: String = "ws://10.0.2.2:8000/ws/audio",
+    val isSimulatorMode: Boolean = false,
+    val sampleRate: Int = 16000,
+    val frameDurationMs: Int = 40,
+    val isBinaryMode: Boolean = true,
+    val autoInterrupt: Boolean = true,
+    val vadThreshold: Float = 0.08f,
+    val isMicMuted: Boolean = false,
+    val isSpeakerOn: Boolean = true,
+    val userAmplitude: Float = 0f,
+    val aiAmplitude: Float = 0f,
+    val currentUserTranscript: String = "",
+    val currentAiText: String = "",
+    val rttMs: Long = 0,
+    val bytesSent: Long = 0,
+    val bytesReceived: Long = 0,
+    val currentConversationId: Long = 0,
+    val messages: List<MessageEntity> = emptyList(),
+    val conversations: List<ConversationEntity> = emptyList(),
+    val errorMessage: String? = null
+)
+
+class DuplexViewModel(application: Application) : AndroidViewModel(application), DuplexEventListener {
+    private val tag = "DuplexViewModel"
+
+    private val repository: DuplexRepository
+    private var audioConfig: AudioConfig
+    private var audioCapture: AudioCaptureManager
+    private var audioPlayback: AudioPlaybackManager
+    private var wsClient: DuplexWebSocketClient
+    private var mockServer: MockDuplexServer
+
+    private val _uiState = MutableStateFlow(DuplexUiState())
+    val uiState: StateFlow<DuplexUiState> = _uiState.asStateFlow()
+
+    private var messageObserveJob: Job? = null
+
+    init {
+        val db = DuplexDatabase.getDatabase(application)
+        repository = DuplexRepository(db.conversationDao())
+
+        audioConfig = AudioConfig(
+            sampleRate = 16000,
+            frameDurationMs = 40,
+            vadEnergyThreshold = 0.08f,
+            autoInterruptOnSpeech = true
+        )
+
+        audioPlayback = AudioPlaybackManager(application, audioConfig)
+
+        audioCapture = AudioCaptureManager(
+            context = application,
+            config = audioConfig,
+            onAudioFrame = { pcmData, rms, isSpeech ->
+                _uiState.update { it.copy(userAmplitude = rms) }
+                if (_uiState.value.isSimulatorMode) {
+                    if (isSpeech) {
+                        mockServer.onUserSpeechDetected(viewModelScope)
+                    }
+                } else {
+                    wsClient.sendAudioFrame(pcmData)
+                }
+            },
+            onBargeInDetected = {
+                triggerBargeIn()
+            }
+        )
+
+        wsClient = DuplexWebSocketClient(this)
+        mockServer = MockDuplexServer(this)
+
+        // Observe stored conversations
+        viewModelScope.launch {
+            repository.allConversations.collect { list ->
+                _uiState.update { it.copy(conversations = list) }
+            }
+        }
+
+        // Observe amplitude from playback manager
+        viewModelScope.launch {
+            audioPlayback.currentRms.collect { rms ->
+                _uiState.update { it.copy(aiAmplitude = rms) }
+            }
+        }
+
+        // Observe network stats
+        viewModelScope.launch {
+            wsClient.bytesSent.collect { sent ->
+                _uiState.update { it.copy(bytesSent = sent) }
+            }
+        }
+        viewModelScope.launch {
+            wsClient.bytesReceived.collect { rcv ->
+                _uiState.update { it.copy(bytesReceived = rcv) }
+            }
+        }
+    }
+
+    /**
+     * Start/stop the full duplex session.
+     */
+    fun toggleConnection() {
+        val currentState = _uiState.value.connectionState
+        if (currentState is ConnectionState.Connected || currentState is ConnectionState.Connecting) {
+            disconnect()
+        } else {
+            connect()
+        }
+    }
+
+    private fun connect() {
+        viewModelScope.launch {
+            // Start audio playback engine
+            audioPlayback.start(viewModelScope)
+
+            // Start audio recording
+            val recordStarted = audioCapture.startRecording(viewModelScope)
+            if (!recordStarted && !audioCapture.hasRecordPermission()) {
+                _uiState.update {
+                    it.copy(errorMessage = "未授予麦克风权限，无法开启实时语音采集")
+                }
+                return@launch
+            }
+
+            // Create a conversation record in database
+            val sessionTitle = "语音会话 " + android.text.format.DateFormat.format("MM-dd HH:mm", System.currentTimeMillis())
+            val convId = repository.createConversation(sessionTitle)
+            _uiState.update {
+                it.copy(
+                    currentConversationId = convId,
+                    currentUserTranscript = "",
+                    currentAiText = "",
+                    interactionState = InteractionState.LISTENING
+                )
+            }
+
+            observeMessages(convId)
+
+            if (_uiState.value.isSimulatorMode) {
+                mockServer.start(viewModelScope)
+            } else {
+                wsClient.isBinaryMode = _uiState.value.isBinaryMode
+                wsClient.connect(_uiState.value.serverUrl, viewModelScope)
+            }
+        }
+    }
+
+    private fun observeMessages(convId: Long) {
+        messageObserveJob?.cancel()
+        messageObserveJob = viewModelScope.launch {
+            repository.getMessagesForConversation(convId).collect { msgs ->
+                _uiState.update { it.copy(messages = msgs) }
+            }
+        }
+    }
+
+    fun disconnect() {
+        audioCapture.stopRecording()
+        audioPlayback.stop()
+
+        if (_uiState.value.isSimulatorMode) {
+            mockServer.stop()
+        } else {
+            wsClient.disconnect()
+        }
+
+        _uiState.update {
+            it.copy(
+                connectionState = ConnectionState.Disconnected,
+                interactionState = InteractionState.IDLE,
+                userAmplitude = 0f,
+                aiAmplitude = 0f
+            )
+        }
+    }
+
+    /**
+     * Full-duplex Barge-in (打断机制):
+     * Can be called automatically by VAD or manually via UI "打断" button.
+     */
+    fun triggerBargeIn() {
+        // 1. Immediately mute and flush the local AudioTrack playback queue
+        audioPlayback.interrupt()
+        audioCapture.isAiSpeaking = false
+
+        // 2. Notify remote server or mock server to stop generating/TTS
+        if (_uiState.value.isSimulatorMode) {
+            mockServer.onUserInterrupt()
+        } else {
+            wsClient.sendInterrupt()
+        }
+
+        // 3. Update interaction state to INTERRUPTED, save transcript if any
+        val currentAi = _uiState.value.currentAiText
+        val convId = _uiState.value.currentConversationId
+        if (currentAi.isNotEmpty() && convId > 0) {
+            viewModelScope.launch {
+                repository.addMessage(
+                    conversationId = convId,
+                    role = "assistant",
+                    content = "$currentAi (已打断)",
+                    wasInterrupted = true
+                )
+            }
+        }
+
+        _uiState.update {
+            it.copy(
+                interactionState = InteractionState.INTERRUPTED,
+                currentAiText = "",
+                aiAmplitude = 0f
+            )
+        }
+    }
+
+    fun toggleMicMute() {
+        val newMute = !_uiState.value.isMicMuted
+        audioCapture.setMuted(newMute)
+        _uiState.update { it.copy(isMicMuted = newMute) }
+    }
+
+    fun toggleSpeaker() {
+        val newSpeaker = audioPlayback.toggleSpeakerphone()
+        _uiState.update { it.copy(isSpeakerOn = newSpeaker) }
+    }
+
+    fun sendTextMessage(text: String) {
+        if (text.isBlank()) return
+        val convId = _uiState.value.currentConversationId
+        viewModelScope.launch {
+            if (convId > 0) {
+                repository.addMessage(convId, "user", text)
+            }
+            if (_uiState.value.isSimulatorMode) {
+                mockServer.onUserSpeechDetected(viewModelScope)
+            } else {
+                wsClient.sendTextMessage(text)
+            }
+        }
+    }
+
+    fun updateSettings(
+        serverUrl: String,
+        isSimulatorMode: Boolean,
+        sampleRate: Int,
+        frameDurationMs: Int,
+        isBinaryMode: Boolean,
+        autoInterrupt: Boolean,
+        vadThreshold: Float
+    ) {
+        _uiState.update {
+            it.copy(
+                serverUrl = serverUrl,
+                isSimulatorMode = isSimulatorMode,
+                sampleRate = sampleRate,
+                frameDurationMs = frameDurationMs,
+                isBinaryMode = isBinaryMode,
+                autoInterrupt = autoInterrupt,
+                vadThreshold = vadThreshold
+            )
+        }
+
+        // Recreate audio config if parameters changed
+        audioConfig = AudioConfig(
+            sampleRate = sampleRate,
+            frameDurationMs = frameDurationMs,
+            vadEnergyThreshold = vadThreshold,
+            autoInterruptOnSpeech = autoInterrupt
+        )
+    }
+
+    fun clearErrorMessage() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    fun deleteConversation(id: Long) {
+        viewModelScope.launch {
+            repository.deleteConversation(id)
+        }
+    }
+
+    fun clearAllHistory() {
+        viewModelScope.launch {
+            repository.clearAll()
+            _uiState.update { it.copy(messages = emptyList()) }
+        }
+    }
+
+    // --- DuplexEventListener Implementations ---
+
+    override fun onConnected() {
+        _uiState.update {
+            it.copy(
+                connectionState = ConnectionState.Connected(it.serverUrl),
+                interactionState = InteractionState.LISTENING,
+                errorMessage = null
+            )
+        }
+
+        // Send handshake session_start
+        if (!_uiState.value.isSimulatorMode) {
+            wsClient.sendSessionStart(
+                sampleRate = _uiState.value.sampleRate,
+                frameDurationMs = _uiState.value.frameDurationMs,
+                autoInterrupt = _uiState.value.autoInterrupt
+            )
+        }
+    }
+
+    override fun onDisconnected(reason: String) {
+        _uiState.update {
+            it.copy(
+                connectionState = ConnectionState.Disconnected,
+                interactionState = InteractionState.IDLE
+            )
+        }
+    }
+
+    override fun onError(error: String) {
+        Log.e(tag, "Duplex error: $error")
+        _uiState.update {
+            it.copy(
+                connectionState = ConnectionState.Error(error),
+                interactionState = InteractionState.IDLE,
+                errorMessage = error
+            )
+        }
+    }
+
+    override fun onAiAudioReceived(pcmData: ByteArray) {
+        audioCapture.isAiSpeaking = true
+        audioPlayback.enqueueAudioChunk(pcmData)
+        _uiState.update {
+            it.copy(interactionState = InteractionState.AI_SPEAKING)
+        }
+    }
+
+    override fun onUserTranscript(text: String, isFinal: Boolean) {
+        _uiState.update {
+            it.copy(
+                currentUserTranscript = text,
+                interactionState = InteractionState.USER_SPEAKING
+            )
+        }
+        if (isFinal && text.isNotBlank()) {
+            val convId = _uiState.value.currentConversationId
+            if (convId > 0) {
+                viewModelScope.launch {
+                    repository.addMessage(convId, "user", text)
+                }
+            }
+        }
+    }
+
+    override fun onAiText(text: String, isFinal: Boolean) {
+        _uiState.update {
+            it.copy(
+                currentAiText = text,
+                interactionState = InteractionState.AI_SPEAKING
+            )
+        }
+        if (isFinal && text.isNotBlank()) {
+            val convId = _uiState.value.currentConversationId
+            if (convId > 0) {
+                viewModelScope.launch {
+                    repository.addMessage(convId, "assistant", text)
+                }
+            }
+        }
+    }
+
+    override fun onAiStateChanged(state: String) {
+        val newState = when (state.lowercase()) {
+            "listening", "ready" -> {
+                audioCapture.isAiSpeaking = false
+                InteractionState.LISTENING
+            }
+            "thinking" -> InteractionState.THINKING
+            "speaking" -> {
+                audioCapture.isAiSpeaking = true
+                InteractionState.AI_SPEAKING
+            }
+            "interrupted" -> {
+                audioCapture.isAiSpeaking = false
+                InteractionState.INTERRUPTED
+            }
+            else -> InteractionState.LISTENING
+        }
+        _uiState.update { it.copy(interactionState = newState) }
+    }
+
+    override fun onLatencyMeasured(rttMs: Long) {
+        _uiState.update { it.copy(rttMs = rttMs) }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        disconnect()
+    }
+}
