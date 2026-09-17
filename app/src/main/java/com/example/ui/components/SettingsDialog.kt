@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -70,6 +71,8 @@ fun SettingsDialog(
     var autoInterrupt by remember { mutableStateOf(initialAutoInterrupt) }
     var vadThreshold by remember { mutableFloatStateOf(initialVadThreshold) }
 
+    var showDeveloperOptions by remember { mutableStateOf(false) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -81,7 +84,7 @@ fun SettingsDialog(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "全双工通信与音频配置",
+                    text = "通话与服务设置",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
             }
@@ -92,12 +95,40 @@ fun SettingsDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .testTag("settings_dialog_content"),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Mode Toggle: Simulator vs Remote
+                // 1. Server Address
+                Column {
+                    Text(
+                        text = "语音模型服务地址",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("server_url_input"),
+                        placeholder = { Text("wss://voice.zswen.online/ws/duplex") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        QuickFillChip(label = "线上生产地址") {
+                            serverUrl = "wss://voice.zswen.online/ws/duplex"
+                        }
+                        QuickFillChip(label = "备用路由") {
+                            serverUrl = "wss://voice.zswen.online/v1/realtime"
+                        }
+                    }
+                }
+
+                // 2. Auto Barge-in (智能打断)
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
                 ) {
                     Row(
                         modifier = Modifier
@@ -108,160 +139,35 @@ fun SettingsDialog(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "本地诊断/模拟模式",
+                                text = "智能发声打断 (Barge-in)",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                             )
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "在远端服务端未就绪时测试VAD、打断和音频流",
+                                text = "AI说话时，您开口说话自动打断并切换为倾听",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TextSecondary
                             )
                         }
                         Switch(
-                            checked = isSimulator,
-                            onCheckedChange = { isSimulator = it },
-                            modifier = Modifier.testTag("simulator_mode_switch")
+                            checked = autoInterrupt,
+                            onCheckedChange = { autoInterrupt = it }
                         )
                     }
                 }
 
-                if (!isSimulator) {
-                    // Server WebSocket URL
-                    Column {
-                        Text(
-                            text = "模型服务 WebSocket 地址",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        OutlinedTextField(
-                            value = serverUrl,
-                            onValueChange = { serverUrl = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("server_url_input"),
-                            placeholder = { Text("ws://10.0.2.2:8080/ws/duplex") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(10.dp)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        // Quick fill buttons
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            QuickFillChip(label = "默认 (8080/ws/duplex)") {
-                                serverUrl = "ws://10.0.2.2:8080/ws/duplex"
-                            }
-                            QuickFillChip(label = "别名 (/v1/realtime)") {
-                                serverUrl = "ws://10.0.2.2:8080/v1/realtime"
-                            }
-                            QuickFillChip(label = "局域网 (8080)") {
-                                serverUrl = "ws://192.168.1.100:8080/ws/duplex"
-                            }
-                        }
-                    }
-                }
-
-                // Audio Sample Rate
-                Column {
-                    Text(
-                        text = "上行采集采样率 (固定 16kHz 为佳, 下行由服务端输出 24kHz)",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = sampleRate == 16000,
-                            onClick = { sampleRate = 16000 },
-                            label = { Text("16000 Hz (服务端标准上行)") }
-                        )
-                        FilterChip(
-                            selected = sampleRate == 24000,
-                            onClick = { sampleRate = 24000 },
-                            label = { Text("24000 Hz") }
-                        )
-                    }
-                }
-
-                // Frame Duration
-                Column {
-                    Text(
-                        text = "单帧时长 (延迟粒度)",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = frameDurationMs == 20,
-                            onClick = { frameDurationMs = 20 },
-                            label = { Text("20ms") }
-                        )
-                        FilterChip(
-                            selected = frameDurationMs == 40,
-                            onClick = { frameDurationMs = 40 },
-                            label = { Text("40ms (推荐)") }
-                        )
-                        FilterChip(
-                            selected = frameDurationMs == 100,
-                            onClick = { frameDurationMs = 100 },
-                            label = { Text("100ms") }
-                        )
-                    }
-                }
-
-                // Payload Format
-                Column {
-                    Text(
-                        text = "传输数据格式",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = isBinary,
-                            onClick = { isBinary = true },
-                            label = { Text("二进制流 (Binary PCM)") }
-                        )
-                        FilterChip(
-                            selected = !isBinary,
-                            onClick = { isBinary = false },
-                            label = { Text("JSON (Base64)") }
-                        )
-                    }
-                }
-
-                // Auto Barge-in (Barge-in on user voice)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "智能说话打断 (Barge-in)",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
-                        )
-                        Text(
-                            text = "AI播放语音时，用户发声自动清空下行缓冲并通知模型",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TextSecondary
-                        )
-                    }
-                    Switch(
-                        checked = autoInterrupt,
-                        onCheckedChange = { autoInterrupt = it }
-                    )
-                }
-
-                // VAD Sensitivity
+                // 3. VAD Sensitivity (语音感应灵敏度)
                 Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "VAD静音/语音检测灵敏度",
+                            text = "麦克风发声感应灵敏度",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
-                            text = "${(vadThreshold * 100).toInt()}%",
+                            text = if (vadThreshold < 0.06f) "高灵敏" else if (vadThreshold < 0.12f) "标准" else "低灵敏(防噪)",
                             style = MaterialTheme.typography.labelMedium,
                             color = CyanAccent
                         )
@@ -269,9 +175,106 @@ fun SettingsDialog(
                     Slider(
                         value = vadThreshold,
                         onValueChange = { vadThreshold = it },
-                        valueRange = 0.02f..0.25f,
+                        valueRange = 0.02f..0.20f,
                         modifier = Modifier.testTag("vad_slider")
                     )
+                }
+
+                // 4. Advanced / Developer Options Toggle
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                    modifier = Modifier.clickable { showDeveloperOptions = !showDeveloperOptions }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 6.dp),
+                                tint = TextSecondary
+                            )
+                            Text(
+                                text = "高级音视频参数",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = TextSecondary
+                            )
+                        }
+                        Text(
+                            text = if (showDeveloperOptions) "收起 ▲" else "展开 ▼",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CyanAccent
+                        )
+                    }
+                }
+
+                // Expandable Developer Options
+                if (showDeveloperOptions) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Offline simulator toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "离线演示体验模式",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Switch(
+                                checked = isSimulator,
+                                onCheckedChange = { isSimulator = it }
+                            )
+                        }
+
+                        // Payload Format
+                        Column {
+                            Text(
+                                text = "音频传输编码方案",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = isBinary,
+                                    onClick = { isBinary = true },
+                                    label = { Text("方案A (二进制裸流)") }
+                                )
+                                FilterChip(
+                                    selected = !isBinary,
+                                    onClick = { isBinary = false },
+                                    label = { Text("方案B (Base64 JSON)") }
+                                )
+                            }
+                        }
+
+                        // Frame Duration
+                        Column {
+                            Text(
+                                text = "帧长粒度",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = frameDurationMs == 20,
+                                    onClick = { frameDurationMs = 20 },
+                                    label = { Text("20ms") }
+                                )
+                                FilterChip(
+                                    selected = frameDurationMs == 40,
+                                    onClick = { frameDurationMs = 40 },
+                                    label = { Text("40ms (推荐)") }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -291,7 +294,7 @@ fun SettingsDialog(
                 },
                 modifier = Modifier.testTag("save_settings_button")
             ) {
-                Text("保存设置")
+                Text("保存")
             }
         },
         dismissButton = {
@@ -311,9 +314,9 @@ private fun QuickFillChip(label: String, onClick: () -> Unit) {
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
             color = CyanAccent,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
         )
     }
 }

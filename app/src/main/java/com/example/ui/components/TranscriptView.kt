@@ -74,25 +74,25 @@ fun TranscriptView(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 32.dp, horizontal = 20.dp),
+                    .padding(vertical = 28.dp, horizontal = 20.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         imageVector = Icons.Default.GraphicEq,
                         contentDescription = null,
-                        tint = CyanAccent.copy(alpha = 0.6f),
+                        tint = CyanAccent.copy(alpha = 0.7f),
                         modifier = Modifier.size(36.dp)
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "全双工实时会话就绪",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        text = "您好！今天想聊点什么？",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = TextPrimary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "点击下方按钮开启语音连接，开始与大模型全双工对话",
+                        text = "点击底部呼叫按钮即可开始与 AI 实时对话，随时开口即可随时打断",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )

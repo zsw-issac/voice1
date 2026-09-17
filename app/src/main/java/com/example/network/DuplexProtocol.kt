@@ -9,8 +9,8 @@ import android.util.Base64
 object DuplexProtocol {
 
     // Default Server Endpoints
-    const val DEFAULT_SERVER_URL = "ws://10.0.2.2:8080/ws/duplex"
-    const val ALIAS_SERVER_URL = "ws://10.0.2.2:8080/v1/realtime"
+    const val DEFAULT_SERVER_URL = "wss://voice.zswen.online/ws/duplex"
+    const val ALIAS_SERVER_URL = "wss://voice.zswen.online/v1/realtime"
 
     // Client -> Server Types
     const val TYPE_INPUT_AUDIO_APPEND = "input_audio_buffer.append"

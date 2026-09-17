@@ -96,7 +96,7 @@ fun VoiceVisualizerOrb(
     // Dynamic state colors
     val primaryGlowColor by animateColorAsState(
         targetValue = when (interactionState) {
-            InteractionState.IDLE -> Color(0xFF334155)
+            InteractionState.IDLE -> Color(0xFF475569)
             InteractionState.LISTENING -> CyanGlow
             InteractionState.USER_SPEAKING -> Color(0xFF34D399) // Emerald
             InteractionState.THINKING -> Color(0xFFF59E0B) // Amber
@@ -127,16 +127,16 @@ fun VoiceVisualizerOrb(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.size(230.dp),
+            modifier = Modifier.size(175.dp),
             contentAlignment = Alignment.Center
         ) {
             // Particle & Wave Orb Canvas
-            Canvas(modifier = Modifier.size(220.dp)) {
+            Canvas(modifier = Modifier.size(170.dp)) {
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val baseRadius = size.width * 0.35f * breathingScale
 
                 // Multi-layer dynamic energy modulation
-                val activeModulation = (smoothUserAmp.value * 35f) + (smoothAiAmp.value * 45f)
+                val activeModulation = (smoothUserAmp.value * 28f) + (smoothAiAmp.value * 36f)
                 val currentRadius = baseRadius + activeModulation
 
                 // 1. Ambient outer aura gradient
@@ -154,14 +154,11 @@ fun VoiceVisualizerOrb(
                 )
 
                 // 2. Dual undulating wave rings
-                val waveCount = 8
                 val rad = currentRadius
-                val waveOffsetAngle = (rotationAngle * PI / 180f).toFloat()
-
                 for (ring in 0..2) {
                     val ringRadius = rad * (0.85f + ring * 0.12f)
                     val alpha = (0.5f - ring * 0.12f).coerceAtLeast(0.1f)
-                    val strokeWidth = (2.5f + (smoothUserAmp.value + smoothAiAmp.value) * 6f)
+                    val strokeWidth = (2.2f + (smoothUserAmp.value + smoothAiAmp.value) * 5f)
 
                     drawCircle(
                         brush = Brush.sweepGradient(
@@ -200,7 +197,7 @@ fun VoiceVisualizerOrb(
                         val nodeY = center.y + orbitR * sin(angle)
                         drawCircle(
                             color = primaryGlowColor,
-                            radius = 3.5f + (smoothAiAmp.value * 4f),
+                            radius = 3f + (smoothAiAmp.value * 3f),
                             center = Offset(nodeX, nodeY)
                         )
                     }
@@ -219,7 +216,7 @@ fun VoiceVisualizerOrb(
 
             Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(46.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF0F172A).copy(alpha = 0.85f)),
                 contentAlignment = Alignment.Center
@@ -228,27 +225,27 @@ fun VoiceVisualizerOrb(
                     imageVector = centerIcon,
                     contentDescription = interactionState.label,
                     tint = primaryGlowColor,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         // State indicator badge
         Surface(
             shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
-            tonalElevation = 4.dp
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+            tonalElevation = 2.dp
         ) {
             Text(
                 text = interactionState.label,
-                style = MaterialTheme.typography.labelLarge.copy(
+                style = MaterialTheme.typography.labelMedium.copy(
                     fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.sp
+                    letterSpacing = 0.5.sp
                 ),
                 color = primaryGlowColor,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
             )
         }
     }

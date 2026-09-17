@@ -6,7 +6,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.SyncAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -33,7 +31,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,158 +43,123 @@ fun DualWaveformBars(
     userAmplitude: Float,
     aiAmplitude: Float,
     rttMs: Long,
-    bytesSent: Long,
-    bytesReceived: Long,
-    sampleRate: Int,
-    isBinary: Boolean,
+    bytesSent: Long = 0L,
+    bytesReceived: Long = 0L,
+    sampleRate: Int = 16000,
+    isBinary: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 20.dp)
             .testTag("dual_waveform_bars"),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        tonalElevation = 2.dp
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        tonalElevation = 1.dp
     ) {
-        Column(
-            modifier = Modifier.padding(12.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Channel equalizer rows
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // User Voice Channel (Upstream Mic)
-                ChannelEqualizer(
-                    title = "用户上行 (MIC)",
-                    amplitude = userAmplitude,
-                    barColor = CyanAccent,
-                    icon = Icons.Default.Mic,
-                    modifier = Modifier.weight(1f)
-                )
+            // User Mic Audio Pill
+            AudioChannelPill(
+                label = "我的声音",
+                amplitude = userAmplitude,
+                accentColor = CyanAccent,
+                icon = Icons.Default.Mic,
+                modifier = Modifier.weight(1f)
+            )
 
-                Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
-                // AI Voice Channel (Downstream Speaker)
-                ChannelEqualizer(
-                    title = "AI下行 (SPK)",
-                    amplitude = aiAmplitude,
-                    barColor = VioletAccent,
-                    icon = Icons.Default.Hearing,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Metrics footer
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // RTT latency
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            // Latency Indicator (clean & consumer styled)
+            if (rttMs > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                ) {
                     Icon(
                         imageVector = Icons.Default.Speed,
                         contentDescription = null,
-                        tint = if (rttMs > 0 && rttMs < 100) Color(0xFF10B981) else Color(0xFFF59E0B),
-                        modifier = Modifier.size(14.dp)
+                        tint = if (rttMs < 120) Color(0xFF10B981) else Color(0xFFF59E0B),
+                        modifier = Modifier.size(13.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
                     Text(
-                        text = if (rttMs > 0) "延迟: ${rttMs}ms" else "延迟: --",
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                        text = "${rttMs}ms",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = TextSecondary
                     )
                 }
-
-                // Audio format badge (16k Up / 24k Down)
-                Text(
-                    text = "↑16k ↓24k · ${if (isBinary) "方案A(裸流)" else "方案B(JSON)"}",
-                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                    color = TextSecondary
-                )
-
-                // Traffic stats
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.SyncAlt,
-                        contentDescription = null,
-                        tint = TextSecondary,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    val sentKb = bytesSent / 1024
-                    val rcvKb = bytesReceived / 1024
-                    Text(
-                        text = "↑${sentKb}K ↓${rcvKb}K",
-                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                        color = TextSecondary
-                    )
-                }
+                Spacer(modifier = Modifier.width(12.dp))
             }
+
+            // AI Voice Audio Pill
+            AudioChannelPill(
+                label = "AI 语音",
+                amplitude = aiAmplitude,
+                accentColor = VioletAccent,
+                icon = Icons.Default.Hearing,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
 
 @Composable
-private fun ChannelEqualizer(
-    title: String,
+private fun AudioChannelPill(
+    label: String,
     amplitude: Float,
-    barColor: Color,
+    accentColor: Color,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     modifier: Modifier = Modifier
 ) {
-    val barCount = 10
-    val multipliers = remember { floatArrayOf(0.4f, 0.7f, 1.0f, 0.85f, 0.6f, 0.9f, 1.1f, 0.75f, 0.5f, 0.3f) }
+    val animatedAmp = remember { Animatable(0f) }
+    LaunchedEffect(amplitude) {
+        animatedAmp.animateTo(
+            targetValue = amplitude.coerceIn(0f, 1f),
+            animationSpec = tween(durationMillis = 80, easing = FastOutSlowInEasing)
+        )
+    }
 
-    Column(modifier = modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = accentColor,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // 4 Modern equalizer rhythm bars
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(bottom = 6.dp)
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = barColor,
-                modifier = Modifier.size(14.dp)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                color = barColor
-            )
-        }
-
-        // Equalizer frequency bars
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(26.dp),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            for (i in 0 until barCount) {
-                val factor = multipliers[i % multipliers.size]
-                val targetHeight = (amplitude * factor * 24f).coerceIn(3f, 24f)
-
-                val animHeight = remember { Animatable(3f) }
-                LaunchedEffect(targetHeight) {
-                    animHeight.animateTo(targetHeight, tween(80, easing = FastOutSlowInEasing))
-                }
-
+            val weights = listOf(0.6f, 1.0f, 0.8f, 0.4f)
+            for (i in 0 until 4) {
+                val barHeight = 4.dp + (20.dp * animatedAmp.value * weights[i])
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(animHeight.value.dp)
+                        .height(barHeight)
                         .clip(CircleShape)
                         .background(
-                            if (amplitude > 0.05f) barColor else barColor.copy(alpha = 0.25f)
+                            if (animatedAmp.value > 0.05f) accentColor else accentColor.copy(alpha = 0.25f)
                         )
                 )
             }

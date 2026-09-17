@@ -23,7 +23,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.IntegrationInstructions
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -57,7 +56,6 @@ import com.example.network.ConnectionState
 import com.example.ui.components.ControlDock
 import com.example.ui.components.DualWaveformBars
 import com.example.ui.components.HistorySheet
-import com.example.ui.components.ProtocolSpecSheet
 import com.example.ui.components.SettingsDialog
 import com.example.ui.components.TranscriptView
 import com.example.ui.components.VoiceVisualizerOrb
@@ -66,17 +64,20 @@ import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
-import com.example.ui.theme.VioletAccent
 
 @Composable
 fun DuplexVoiceScreen(
     viewModel: DuplexViewModel,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var showHistorySheet by remember { mutableStateOf(false) }
+
+    // Audio record permission handling
     var hasRecordPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -88,27 +89,18 @@ fun DuplexVoiceScreen(
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasRecordPermission = granted
-        if (!granted) {
-            // Permission denied banner
+    ) { isGranted ->
+        hasRecordPermission = isGranted
+        if (isGranted) {
+            viewModel.toggleConnection()
         }
     }
 
-    LaunchedEffect(Unit) {
-        if (!hasRecordPermission) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
-
-    var showSettingsDialog by remember { mutableStateOf(false) }
-    var showProtocolSpecSheet by remember { mutableStateOf(false) }
-    var showHistorySheet by remember { mutableStateOf(false) }
-
-    LaunchedEffect(uiState.errorMessage) {
-        uiState.errorMessage?.let { msg ->
-            snackbarHostState.showSnackbar(msg)
-            viewModel.clearErrorMessage()
+    // Show error toast/snackbar
+    LaunchedEffect(uiState.connectionState) {
+        if (uiState.connectionState is ConnectionState.Error) {
+            val errorMsg = (uiState.connectionState as ConnectionState.Error).message
+            snackbarHostState.showSnackbar(errorMsg)
         }
     }
 
@@ -147,7 +139,6 @@ fun DuplexVoiceScreen(
             TopBarHeader(
                 connectionState = uiState.connectionState,
                 isSimulator = uiState.isSimulatorMode,
-                onOpenProtocolSpec = { showProtocolSpecSheet = true },
                 onOpenHistory = { showHistorySheet = true },
                 onOpenSettings = { showSettingsDialog = true }
             )
@@ -175,7 +166,7 @@ fun DuplexVoiceScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "需要麦克风权限以开启全双工音频采集",
+                                text = "需要麦克风权限以开启全双工语音交互",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = CoralWarning
                             )
@@ -191,7 +182,7 @@ fun DuplexVoiceScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // 1. Interactive Voice Visualizer Orb
             VoiceVisualizerOrb(
@@ -201,9 +192,9 @@ fun DuplexVoiceScreen(
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // 2. Dual Channel Waveform & Metrics
+            // 2. Dual Channel Voice Level Indicator
             DualWaveformBars(
                 userAmplitude = uiState.userAmplitude,
                 aiAmplitude = uiState.aiAmplitude,
@@ -214,7 +205,7 @@ fun DuplexVoiceScreen(
                 isBinary = uiState.isBinaryMode
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // 3. Conversational Transcript View
             TranscriptView(
@@ -251,12 +242,6 @@ fun DuplexVoiceScreen(
         )
     }
 
-    if (showProtocolSpecSheet) {
-        ProtocolSpecSheet(
-            onDismiss = { showProtocolSpecSheet = false }
-        )
-    }
-
     if (showHistorySheet) {
         HistorySheet(
             conversations = uiState.conversations,
@@ -271,7 +256,6 @@ fun DuplexVoiceScreen(
 private fun TopBarHeader(
     connectionState: ConnectionState,
     isSimulator: Boolean,
-    onOpenProtocolSpec: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -285,7 +269,7 @@ private fun TopBarHeader(
         // App title & Connection Status Pill
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "全双工语音",
+                text = "全双工语音助手",
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = 0.5.sp
@@ -297,11 +281,11 @@ private fun TopBarHeader(
 
             // Status Badge
             val (statusText, statusColor) = when {
-                isSimulator -> "本地诊断" to CyanAccent
-                connectionState is ConnectionState.Connected -> "已连接" to EmeraldSuccess
-                connectionState is ConnectionState.Connecting -> "连接中" to Color(0xFFF59E0B)
-                connectionState is ConnectionState.Error -> "异常" to CoralWarning
-                else -> "未连接" to TextSecondary
+                isSimulator -> "离线演示" to CyanAccent
+                connectionState is ConnectionState.Connected -> "已连通" to EmeraldSuccess
+                connectionState is ConnectionState.Connecting -> "连接中..." to Color(0xFFF59E0B)
+                connectionState is ConnectionState.Error -> "离线" to CoralWarning
+                else -> "待呼叫" to TextSecondary
             }
 
             Surface(
@@ -309,7 +293,7 @@ private fun TopBarHeader(
                 color = statusColor.copy(alpha = 0.15f)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
@@ -333,18 +317,6 @@ private fun TopBarHeader(
 
         // Action Icons
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Protocol Spec Documentation button
-            IconButton(
-                onClick = onOpenProtocolSpec,
-                modifier = Modifier.testTag("protocol_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.IntegrationInstructions,
-                    contentDescription = "对接协议文档",
-                    tint = VioletAccent
-                )
-            }
-
             // History button
             IconButton(
                 onClick = onOpenHistory,
@@ -352,7 +324,7 @@ private fun TopBarHeader(
             ) {
                 Icon(
                     imageVector = Icons.Default.History,
-                    contentDescription = "历史会话",
+                    contentDescription = "历史对话",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
