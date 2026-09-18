@@ -1,6 +1,13 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -27,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,12 +50,11 @@ import com.example.network.ConnectionState
 import com.example.ui.InteractionState
 import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VioletAccent
+import kotlin.math.sin
 
 /**
- * Concise, tech-savvy single-line display banner.
- * Shows exactly ONE clean, dynamic text line corresponding to the current live dialogue state.
+ * Single-line focused dialogue banner with live animated micro-equalizer and glowing glass border.
  */
 @Composable
 fun SingleSubtitleBanner(
@@ -58,7 +65,6 @@ fun SingleSubtitleBanner(
     currentAiText: String,
     modifier: Modifier = Modifier
 ) {
-    // Determine the active single sentence to display
     data class DisplayState(
         val role: String, // "ai", "user", or "system"
         val text: String,
@@ -93,19 +99,36 @@ fun SingleSubtitleBanner(
         }
     }
 
+    val infiniteTransition = rememberInfiniteTransition(label = "banner_ambient")
+    val borderGlowPhase by infiniteTransition.animateFloat(
+        initialValue = 0.08f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "border_glow"
+    )
+
+    val tagColor = when (currentDisplay.role) {
+        "user" -> CyanAccent
+        "ai" -> VioletAccent
+        else -> CyanAccent.copy(alpha = 0.85f)
+    }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
             .testTag("single_subtitle_banner"),
         shape = RoundedCornerShape(24.dp),
-        color = Color(0xFF101726).copy(alpha = 0.65f),
+        color = Color(0xFF0F1626).copy(alpha = 0.70f),
         border = BorderStroke(
-            1.dp,
+            1.2.dp,
             Brush.verticalGradient(
                 listOf(
-                    Color.White.copy(alpha = 0.12f),
-                    Color.White.copy(alpha = 0.02f)
+                    tagColor.copy(alpha = borderGlowPhase),
+                    Color.White.copy(alpha = 0.04f)
                 )
             )
         ),
@@ -119,7 +142,7 @@ fun SingleSubtitleBanner(
         ) {
             AnimatedContent(
                 targetState = currentDisplay,
-                transitionSpec = { fadeIn() togetherWith fadeOut() },
+                transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
                 label = "subtitle_fade"
             ) { display ->
                 Column(
@@ -131,7 +154,7 @@ fun SingleSubtitleBanner(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        val (tagIcon, tagColor, tagLabel) = when (display.role) {
+                        val (tagIcon, roleColor, tagLabel) = when (display.role) {
                             "user" -> Triple(Icons.Default.Mic, CyanAccent, if (display.isLive) "您正在说" else "您")
                             "ai" -> Triple(Icons.Default.SmartToy, VioletAccent, if (display.isLive) "小澈正在回答" else "小澈")
                             else -> Triple(Icons.Default.GraphicEq, CyanAccent.copy(alpha = 0.85f), "全双工实时流")
@@ -139,15 +162,15 @@ fun SingleSubtitleBanner(
 
                         Box(
                             modifier = Modifier
-                                .size(22.dp)
+                                .size(24.dp)
                                 .clip(CircleShape)
-                                .background(tagColor.copy(alpha = 0.18f)),
+                                .background(roleColor.copy(alpha = 0.18f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = tagIcon,
                                 contentDescription = null,
-                                tint = tagColor,
+                                tint = roleColor,
                                 modifier = Modifier.size(13.dp)
                             )
                         }
@@ -157,14 +180,20 @@ fun SingleSubtitleBanner(
                         Text(
                             text = tagLabel,
                             style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.5.sp
                             ),
-                            color = tagColor
+                            color = roleColor
                         )
+
+                        // If currently live, show 3-bar animated dancing micro wave
+                        if (display.isLive) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            LiveMicroWave(color = roleColor)
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Text Content (Clean, single focused message)
                     Text(
@@ -179,6 +208,40 @@ fun SingleSubtitleBanner(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 3-bar animated dancing micro-wave indicating active speech.
+ */
+@Composable
+private fun LiveMicroWave(color: Color) {
+    val infiniteTransition = rememberInfiniteTransition(label = "micro_wave")
+    val phase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 6.28f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "wave_phase"
+    )
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        for (i in 0 until 3) {
+            val waveFactor = (sin(phase + i * 1.5f) * 0.5f + 0.5f)
+            val barH = 4.dp + 7.dp * waveFactor
+            Box(
+                modifier = Modifier
+                    .width(2.5.dp)
+                    .height(barH)
+                    .clip(CircleShape)
+                    .background(color)
+            )
         }
     }
 }

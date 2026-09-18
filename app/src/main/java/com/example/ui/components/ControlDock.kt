@@ -1,13 +1,15 @@
 package com.example.ui.components
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -25,15 +27,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,7 +48,7 @@ import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VioletAccent
 
 /**
- * Clean & minimal Call Dock focusing purely on the primary Call Start/Stop action.
+ * Dynamic Call Dock with radiant sonar ripple rings and tactile feedback.
  */
 @Composable
 fun ControlDock(
@@ -58,60 +60,95 @@ fun ControlDock(
     val isConnected = connectionState is ConnectionState.Connected
     val isConnecting = connectionState is ConnectionState.Connecting
 
-    // Ambient breathing / pulsing animation while connected
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (isConnected) 1.08f else 1f,
+    val infiniteTransition = rememberInfiniteTransition(label = "dock_motion")
+
+    // Sonar wave ripple expansion
+    val rippleProgress1 by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
+            animation = tween(1800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
         ),
-        label = "call_pulse"
+        label = "sonar_1"
     )
 
-    // Outer glow pulse
-    val glowScale by infiniteTransition.animateFloat(
-        initialValue = 1.05f,
-        targetValue = if (isConnected) 1.25f else 1.05f,
+    val rippleProgress2 by infiniteTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1.5f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
+            animation = tween(1800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "sonar_2"
+    )
+
+    // Breathing pulse for central button
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.97f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "glow_pulse"
+        label = "pulse_scale"
     )
+
+    val accentColor = when {
+        isConnected -> CoralWarning
+        isConnecting -> Color(0xFFF59E0B)
+        else -> CyanAccent
+    }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(bottom = 20.dp, top = 8.dp),
+            .padding(bottom = 18.dp, top = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.size(88.dp),
+            modifier = Modifier.size(104.dp),
             contentAlignment = Alignment.Center
         ) {
-            // Glowing halo when connected
-            if (isConnected) {
-                Box(
-                    modifier = Modifier
-                        .size(76.dp)
-                        .scale(glowScale)
-                        .clip(CircleShape)
-                        .background(CoralWarning.copy(alpha = 0.22f))
-                )
-            } else if (isConnecting) {
-                Box(
-                    modifier = Modifier
-                        .size(76.dp)
-                        .scale(glowScale)
-                        .clip(CircleShape)
-                        .background(CyanAccent.copy(alpha = 0.22f))
-                )
+            // Radiant Sonar Ripples Canvas
+            Canvas(modifier = Modifier.size(104.dp)) {
+                val center = Offset(size.width / 2f, size.height / 2f)
+                val baseRadius = 36.dp.toPx()
+
+                if (isConnected || isConnecting) {
+                    // Ripple 1
+                    val r1 = baseRadius + (rippleProgress1 * 16.dp.toPx())
+                    val alpha1 = ((1f - rippleProgress1) * 0.45f).coerceIn(0f, 1f)
+                    drawCircle(
+                        color = accentColor.copy(alpha = alpha1),
+                        radius = r1,
+                        center = center,
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+
+                    // Ripple 2
+                    val normProg2 = rippleProgress2 % 1f
+                    val r2 = baseRadius + (normProg2 * 16.dp.toPx())
+                    val alpha2 = ((1f - normProg2) * 0.45f).coerceIn(0f, 1f)
+                    drawCircle(
+                        color = accentColor.copy(alpha = alpha2),
+                        radius = r2,
+                        center = center,
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+                } else {
+                    // Ambient idle halo
+                    val idleHaloR = baseRadius + 6.dp.toPx() * pulseScale
+                    drawCircle(
+                        color = CyanAccent.copy(alpha = 0.12f),
+                        radius = idleHaloR,
+                        center = center
+                    )
+                }
             }
 
-            // Central Call / Hangup Button
+            // Central Action Button with Dynamic Gradient
             Box(
                 modifier = Modifier
                     .size(72.dp)
@@ -127,6 +164,13 @@ fun ControlDock(
                                 listOf(CyanAccent, VioletAccent)
                             }
                         )
+                    )
+                    .border(
+                        width = 2.dp,
+                        brush = Brush.linearGradient(
+                            listOf(Color.White.copy(alpha = 0.4f), Color.White.copy(alpha = 0.05f))
+                        ),
+                        shape = CircleShape
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -146,7 +190,7 @@ fun ControlDock(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         Text(
             text = when {

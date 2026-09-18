@@ -2,7 +2,13 @@ package com.example.ui.components
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,17 +24,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -37,7 +44,13 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VioletAccent
+import kotlin.math.PI
+import kotlin.math.sin
 
+/**
+ * Dual channel voice level indicator with rhythmic, living equalizer animation.
+ * Features ambient harmonic breathing so the audio channels are continuously alive.
+ */
 @Composable
 fun DualWaveformBars(
     userAmplitude: Float,
@@ -52,17 +65,17 @@ fun DualWaveformBars(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 18.dp)
             .testTag("dual_waveform_bars"),
         shape = RoundedCornerShape(22.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
         tonalElevation = 2.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -75,18 +88,18 @@ fun DualWaveformBars(
                 modifier = Modifier.weight(1f)
             )
 
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
-            // Latency Indicator (clean & consumer styled pill)
+            // Latency Indicator with dynamic status dot
             if (rttMs > 0) {
                 Surface(
                     shape = CircleShape,
-                    color = Color(0xFF0F172A).copy(alpha = 0.75f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
+                    color = Color(0xFF0C1220).copy(alpha = 0.85f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -105,7 +118,7 @@ fun DualWaveformBars(
                         )
                     }
                 }
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
             }
 
             // XiaoChe Voice Audio Pill
@@ -132,9 +145,21 @@ private fun AudioChannelPill(
     LaunchedEffect(amplitude) {
         animatedAmp.animateTo(
             targetValue = amplitude.coerceIn(0f, 1f),
-            animationSpec = tween(durationMillis = 80, easing = FastOutSlowInEasing)
+            animationSpec = tween(durationMillis = 70, easing = FastOutSlowInEasing)
         )
     }
+
+    // Idle ambient living rhythm
+    val infiniteTransition = rememberInfiniteTransition(label = "eq_ambient")
+    val rhythmPhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 2f * PI.toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rhythm"
+    )
 
     Row(
         modifier = modifier,
@@ -144,35 +169,48 @@ private fun AudioChannelPill(
             imageVector = icon,
             contentDescription = label,
             tint = accentColor,
-            modifier = Modifier.size(16.dp)
+            modifier = Modifier.size(15.dp)
         )
-        Spacer(modifier = Modifier.width(6.dp))
+        Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium.copy(
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 12.sp
+                fontSize = 11.5.sp
             ),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(6.dp))
 
-        // 5 Modern dynamic equalizer rhythm bars
+        // 6 Living Equalizer Rhythm Bars
         Row(
             modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val weights = listOf(0.45f, 0.85f, 1.0f, 0.75f, 0.5f)
-            for (i in 0 until 5) {
-                val barHeight = 4.dp + (18.dp * animatedAmp.value * weights[i])
+            val weights = listOf(0.40f, 0.75f, 1.0f, 0.85f, 0.60f, 0.35f)
+            val barCount = weights.size
+            for (i in 0 until barCount) {
+                val idleWave = (sin(rhythmPhase + i * 0.9f) * 0.5f + 0.5f) * 3f
+                val activeAmpBoost = animatedAmp.value * 22f * weights[i]
+                val currentHeight = (3.5f + idleWave + activeAmpBoost).dp
+
+                val isHighVolume = animatedAmp.value > 0.08f
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(barHeight)
+                        .height(currentHeight)
                         .clip(CircleShape)
                         .background(
-                            if (animatedAmp.value > 0.05f) accentColor else accentColor.copy(alpha = 0.22f)
+                            brush = if (isHighVolume) {
+                                Brush.verticalGradient(
+                                    listOf(accentColor, accentColor.copy(alpha = 0.6f))
+                                )
+                            } else {
+                                Brush.verticalGradient(
+                                    listOf(accentColor.copy(alpha = 0.38f), accentColor.copy(alpha = 0.16f))
+                                )
+                            }
                         )
                 )
             }

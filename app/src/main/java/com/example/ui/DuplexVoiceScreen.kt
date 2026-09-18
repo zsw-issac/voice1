@@ -5,6 +5,12 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -121,6 +127,36 @@ fun DuplexVoiceScreen(
         }
     }
 
+    // Ambient drifting aurora background transition
+    val backgroundTransition = rememberInfiniteTransition(label = "aurora_ambient")
+    val auroraOffsetX by backgroundTransition.animateFloat(
+        initialValue = -120f,
+        targetValue = 120f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(6000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "aurora_x"
+    )
+    val auroraOffsetY by backgroundTransition.animateFloat(
+        initialValue = -90f,
+        targetValue = 90f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "aurora_y"
+    )
+    val auroraIntensity by backgroundTransition.animateFloat(
+        initialValue = 0.20f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "aurora_intensity"
+    )
+
     Scaffold(
         modifier = modifier
             .fillMaxSize()
@@ -148,16 +184,16 @@ fun DuplexVoiceScreen(
                     brush = Brush.radialGradient(
                         colors = listOf(
                             when (uiState.interactionState) {
-                                InteractionState.USER_SPEAKING -> Color(0xFF047857).copy(alpha = 0.22f)
-                                InteractionState.AI_SPEAKING -> Color(0xFF6D28D9).copy(alpha = 0.25f)
-                                InteractionState.LISTENING -> Color(0xFF0369A1).copy(alpha = 0.22f)
-                                InteractionState.THINKING -> Color(0xFFD97706).copy(alpha = 0.20f)
-                                else -> Color(0xFF1E293B).copy(alpha = 0.25f)
+                                InteractionState.USER_SPEAKING -> Color(0xFF047857).copy(alpha = (auroraIntensity + 0.08f).coerceAtMost(0.5f))
+                                InteractionState.AI_SPEAKING -> Color(0xFF7C3AED).copy(alpha = (auroraIntensity + 0.12f).coerceAtMost(0.55f))
+                                InteractionState.LISTENING -> Color(0xFF0284C7).copy(alpha = auroraIntensity)
+                                InteractionState.THINKING -> Color(0xFFD97706).copy(alpha = auroraIntensity)
+                                else -> Color(0xFF1E293B).copy(alpha = auroraIntensity * 0.75f)
                             },
                             Color(0xFF080C14)
                         ),
-                        center = Offset(500f, 350f),
-                        radius = 1200f
+                        center = Offset(500f + auroraOffsetX, 380f + auroraOffsetY),
+                        radius = 1250f
                     )
                 )
         ) {
