@@ -26,7 +26,7 @@ class MockDuplexServer(
         if (isConnected) return
         isConnected = true
         listener.onConnected()
-        listener.onSessionReady("mock_sess_01", "Qwen2.5-Omni-7B (Simulator)")
+        listener.onSessionReady("mock_sess_01", "Qwen2.5-Omni-7B (Simulator)", "finetuned", listOf("finetuned", "omni"))
         listener.onAiStateChanged("listening")
 
         // Periodically report simulated low latency RTT

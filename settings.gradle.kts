@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Duplex Voice"
+rootProject.name = "小澈"
 
 include(":app")

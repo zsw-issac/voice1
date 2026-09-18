@@ -1,6 +1,6 @@
 {
-  "name": "全双工语音",
-  "description": "全双工实时语音交互客户端，具备双向流式音频传输、实时VAD与打断(Barge-in)、低延迟音频流播放及WebSocket对接能力。",
+  "name": "小澈",
+  "description": "小澈 - 全双工实时智能语音助手，支持双向流式对话、微调模式与端到端Omni模式即时切换、毫秒级交互与实时打断。",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

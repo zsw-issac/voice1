@@ -24,12 +24,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class InteractionState(val label: String) {
-    IDLE("待命"),
-    LISTENING("正在倾听"),
-    USER_SPEAKING("用户说话中"),
-    THINKING("模型思考中"),
-    AI_SPEAKING("AI正在回复"),
-    INTERRUPTED("已打断")
+    IDLE("待呼叫"),
+    LISTENING("正在聆听"),
+    USER_SPEAKING("您正在讲话"),
+    THINKING("小澈思考中"),
+    AI_SPEAKING("小澈正在回答"),
+    INTERRUPTED("已打断小澈")
 }
 
 data class DuplexUiState(
@@ -58,6 +58,8 @@ data class DuplexUiState(
     val currentConversationId: Long = 0,
     val messages: List<MessageEntity> = emptyList(),
     val conversations: List<ConversationEntity> = emptyList(),
+    val voiceMode: String = "finetuned",
+    val availableVoiceModes: List<String> = listOf("finetuned", "omni"),
     val errorMessage: String? = null
 ) {
     // Helper for UI sample rate display
@@ -271,6 +273,23 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
         _uiState.update { it.copy(isSpeakerOn = newSpeaker) }
     }
 
+    /**
+     * Switch voice mode (e.g. "finetuned" vs "omni").
+     * Sends session.set_voice_mode to server and updates local state.
+     * Can be sent at any time (including while AI is speaking).
+     */
+    fun setVoiceMode(mode: String) {
+        Log.d(tag, "Switching voice mode to: $mode")
+        _uiState.update { it.copy(voiceMode = mode) }
+        if (!_uiState.value.isSimulatorMode) {
+            wsClient.sendVoiceMode(mode)
+        }
+    }
+
+    fun clearError() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
     fun sendTextMessage(text: String) {
         if (text.isBlank()) return
         val convId = _uiState.value.currentConversationId
@@ -364,13 +383,34 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
         }
     }
 
-    override fun onSessionReady(sessionId: String, model: String) {
-        Log.d(tag, "Session ready: id=$sessionId model=$model")
+    override fun onServerError(code: String, message: String) {
+        Log.w(tag, "Duplex server error: code=$code message=$message")
+        _uiState.update {
+            it.copy(
+                errorMessage = if (message.isNotBlank()) message else "服务端错误: $code"
+            )
+        }
+    }
+
+    override fun onSessionReady(sessionId: String, model: String, voiceMode: String, voiceModes: List<String>) {
+        Log.d(tag, "Session ready: id=$sessionId model=$model voiceMode=$voiceMode modes=$voiceModes")
         _uiState.update {
             it.copy(
                 sessionId = sessionId,
                 serverModel = model,
+                voiceMode = voiceMode.ifEmpty { it.voiceMode },
+                availableVoiceModes = if (voiceModes.isNotEmpty()) voiceModes else it.availableVoiceModes,
                 interactionState = InteractionState.LISTENING
+            )
+        }
+    }
+
+    override fun onVoiceModeUpdated(voiceMode: String, availableModes: List<String>) {
+        Log.d(tag, "Voice mode updated: $voiceMode available=$availableModes")
+        _uiState.update {
+            it.copy(
+                voiceMode = voiceMode.ifEmpty { it.voiceMode },
+                availableVoiceModes = if (availableModes.isNotEmpty()) availableModes else it.availableVoiceModes
             )
         }
     }
@@ -395,9 +435,10 @@ class DuplexViewModel(application: Application) : AndroidViewModel(application),
     }
 
     override fun onTranscriptFinal(text: String, responseId: Int) {
+        // Clear currentAiText to prevent duplicate rendering when message is saved to DB
         _uiState.update {
             it.copy(
-                currentAiText = text
+                currentAiText = ""
             )
         }
         val convId = _uiState.value.currentConversationId

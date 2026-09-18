@@ -19,10 +19,12 @@ object DuplexProtocol {
     const val TYPE_SESSION_START = "session.start"
     const val TYPE_SESSION_UPDATE = "session.update"
     const val TYPE_SESSION_FINISH = "session.finish"
+    const val TYPE_SESSION_SET_VOICE_MODE = "session.set_voice_mode"
     const val TYPE_PING = "ping"
 
     // Server -> Client Types
     const val TYPE_SESSION_READY = "session.ready"
+    const val TYPE_VOICE_MODE = "voice_mode"
     const val TYPE_STATE = "state"
     const val TYPE_RESPONSE_START = "response.start"
     const val TYPE_TRANSCRIPT = "transcript"
@@ -70,6 +72,17 @@ object DuplexProtocol {
     fun buildSessionFinish(): String {
         return JSONObject().apply {
             put("type", TYPE_SESSION_FINISH)
+        }.toString()
+    }
+
+    /**
+     * Creates session.set_voice_mode message:
+     * {"type":"session.set_voice_mode","value":"omni" | "cosy"}
+     */
+    fun buildSetVoiceMode(mode: String): String {
+        return JSONObject().apply {
+            put("type", TYPE_SESSION_SET_VOICE_MODE)
+            put("value", mode)
         }.toString()
     }
 

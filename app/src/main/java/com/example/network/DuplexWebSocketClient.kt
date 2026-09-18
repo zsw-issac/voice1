@@ -31,6 +31,9 @@ interface DuplexEventListener {
     fun onConnected()
     fun onDisconnected(reason: String)
     fun onError(error: String)
+    fun onServerError(code: String, message: String) {
+        onError("[$code] $message")
+    }
     fun onAiAudioReceived(pcmData: ByteArray, isLast: Boolean, responseId: Int)
     fun onTranscriptDelta(delta: String, responseId: Int)
     fun onTranscriptFinal(text: String, responseId: Int)
@@ -38,7 +41,8 @@ interface DuplexEventListener {
     fun onResponseStarted(responseId: Int)
     fun onResponseInterrupted(responseId: Int)
     fun onResponseDone(responseId: Int, cancelled: Boolean)
-    fun onSessionReady(sessionId: String, model: String)
+    fun onSessionReady(sessionId: String, model: String, voiceMode: String = "finetuned", voiceModes: List<String> = listOf("finetuned", "omni"))
+    fun onVoiceModeUpdated(voiceMode: String, availableModes: List<String>)
     fun onLatencyMeasured(rttMs: Long)
 }
 
@@ -172,7 +176,37 @@ class DuplexWebSocketClient(
                 DuplexProtocol.TYPE_SESSION_READY -> {
                     val sessionId = json.optString("session_id", "")
                     val model = json.optString("model", "")
-                    listener.onSessionReady(sessionId, model)
+                    val voiceMode = json.optString("voice_mode", "finetuned")
+                    val modesArray = json.optJSONArray("voice_modes")
+                    val voiceModes = mutableListOf<String>()
+                    if (modesArray != null) {
+                        for (i in 0 until modesArray.length()) {
+                            val modeItem = modesArray.optString(i, "")
+                            if (modeItem.isNotEmpty()) {
+                                voiceModes.add(modeItem)
+                            }
+                        }
+                    } else if (voiceMode.isNotEmpty()) {
+                        voiceModes.add(voiceMode)
+                    }
+                    Log.d(tag, "session.ready: id=$sessionId model=$model voice_mode=$voiceMode voice_modes=$voiceModes")
+                    listener.onSessionReady(sessionId, model, voiceMode, voiceModes)
+                }
+
+                DuplexProtocol.TYPE_VOICE_MODE -> {
+                    val mode = json.optString("value", "")
+                    val availableArray = json.optJSONArray("available")
+                    val available = mutableListOf<String>()
+                    if (availableArray != null) {
+                        for (i in 0 until availableArray.length()) {
+                            val modeItem = availableArray.optString(i, "")
+                            if (modeItem.isNotEmpty()) {
+                                available.add(modeItem)
+                            }
+                        }
+                    }
+                    Log.d(tag, "voice_mode received: value=$mode available=$available")
+                    listener.onVoiceModeUpdated(mode, available)
                 }
 
                 DuplexProtocol.TYPE_STATE -> {
@@ -230,7 +264,8 @@ class DuplexWebSocketClient(
                 DuplexProtocol.TYPE_ERROR -> {
                     val code = json.optString("code", "")
                     val msg = json.optString("message", "服务端错误: $code")
-                    listener.onError("[$code] $msg")
+                    Log.w(tag, "Server error: code=$code msg=$msg")
+                    listener.onServerError(code, msg)
                 }
 
                 else -> {
@@ -279,6 +314,22 @@ class DuplexWebSocketClient(
             _bytesSent.value += json.toByteArray().size
         } catch (e: Exception) {
             Log.e(tag, "Failed to send interrupt: ${e.message}")
+        }
+    }
+
+    /**
+     * Sends voice mode switch request:
+     * {"type":"session.set_voice_mode","value":"omni" | "cosy"}
+     */
+    fun sendVoiceMode(mode: String) {
+        val ws = webSocket ?: return
+        try {
+            val json = DuplexProtocol.buildSetVoiceMode(mode)
+            ws.send(json)
+            _bytesSent.value += json.toByteArray().size
+            Log.d(tag, "Sent session.set_voice_mode: $mode")
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to send voice mode: ${e.message}")
         }
     }
 

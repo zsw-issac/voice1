@@ -54,14 +54,15 @@ fun DualWaveformBars(
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
             .testTag("dual_waveform_bars"),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-        tonalElevation = 1.dp
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        tonalElevation = 2.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -74,33 +75,42 @@ fun DualWaveformBars(
                 modifier = Modifier.weight(1f)
             )
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
-            // Latency Indicator (clean & consumer styled)
+            // Latency Indicator (clean & consumer styled pill)
             if (rttMs > 0) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 4.dp)
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFF0F172A).copy(alpha = 0.75f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Speed,
-                        contentDescription = null,
-                        tint = if (rttMs < 120) Color(0xFF10B981) else Color(0xFFF59E0B),
-                        modifier = Modifier.size(13.dp)
-                    )
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Text(
-                        text = "${rttMs}ms",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                        color = TextSecondary
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(if (rttMs < 120) Color(0xFF10B981) else Color(0xFFF59E0B))
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${rttMs}ms",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = TextSecondary
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
             }
 
-            // AI Voice Audio Pill
+            // XiaoChe Voice Audio Pill
             AudioChannelPill(
-                label = "AI 语音",
+                label = "小澈应答",
                 amplitude = aiAmplitude,
                 accentColor = VioletAccent,
                 icon = Icons.Default.Hearing,
@@ -139,27 +149,30 @@ private fun AudioChannelPill(
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.sp
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.width(8.dp))
 
-        // 4 Modern equalizer rhythm bars
+        // 5 Modern dynamic equalizer rhythm bars
         Row(
             modifier = Modifier.weight(1f),
             horizontalArrangement = Arrangement.spacedBy(2.5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val weights = listOf(0.6f, 1.0f, 0.8f, 0.4f)
-            for (i in 0 until 4) {
-                val barHeight = 4.dp + (20.dp * animatedAmp.value * weights[i])
+            val weights = listOf(0.45f, 0.85f, 1.0f, 0.75f, 0.5f)
+            for (i in 0 until 5) {
+                val barHeight = 4.dp + (18.dp * animatedAmp.value * weights[i])
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(barHeight)
                         .clip(CircleShape)
                         .background(
-                            if (animatedAmp.value > 0.05f) accentColor else accentColor.copy(alpha = 0.25f)
+                            if (animatedAmp.value > 0.05f) accentColor else accentColor.copy(alpha = 0.22f)
                         )
                 )
             }

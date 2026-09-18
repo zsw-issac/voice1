@@ -115,8 +115,9 @@ fun TranscriptView(
                     )
                 }
 
-                // Streaming user live input bubble
-                if (currentUserTranscript.isNotEmpty()) {
+                // Streaming user live input bubble (avoid duplicating if already saved)
+                val lastUserMsg = messages.lastOrNull { it.role == "user" }?.content?.trim()
+                if (currentUserTranscript.isNotEmpty() && currentUserTranscript.trim() != lastUserMsg) {
                     item(key = "live_user") {
                         MessageBubble(
                             role = "user",
@@ -126,8 +127,9 @@ fun TranscriptView(
                     }
                 }
 
-                // Streaming AI live response bubble
-                if (currentAiText.isNotEmpty()) {
+                // Streaming AI live response bubble (avoid duplicating if already saved)
+                val lastAssistantMsg = messages.lastOrNull { it.role == "assistant" }?.content?.trim()
+                if (currentAiText.isNotEmpty() && currentAiText.trim() != lastAssistantMsg) {
                     item(key = "live_ai") {
                         MessageBubble(
                             role = "assistant",
